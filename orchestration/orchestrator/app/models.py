@@ -182,6 +182,8 @@ class Delegation:
     runtime_profile: str | None = None
     candidate_revision: str | None = None
     candidate_digest: str | None = None
+    granted_candidate_revision: str | None = None
+    granted_candidate_digest: str | None = None
     contract_revision: str | None = None
     baseline: str | None = None
     reviews: list[ReviewRecord] = field(default_factory=list)
@@ -415,6 +417,8 @@ class TaskContract:
             "runtime_profile": self.delegation.runtime_profile,
             "candidate_revision": self.delegation.candidate_revision,
             "candidate_digest": self.delegation.candidate_digest,
+            "granted_candidate_revision": self.delegation.granted_candidate_revision,
+            "granted_candidate_digest": self.delegation.granted_candidate_digest,
             "contract_revision": self.delegation.contract_revision,
             "baseline": self.delegation.baseline,
             "accepted_by": self.delegation.accepted_by,

@@ -112,7 +112,7 @@ def test_review_non_pass_then_start_running_cannot_clear_release(store: Delegati
         findings=[],
     )
     with pytest.raises(ActivationError, match="stale_attempt|released"):
-        store.start_running("t-revive", by="noesis-forge")
+        store.start_running("t-revive", by="noesis-forge", expected_attempt_epoch=1)
     again = store.get("t-revive")
     assert again is not None and again.lease is not None
     assert again.lease.execution_released_at == released
@@ -143,10 +143,10 @@ def test_released_observe_budget_consume_renew_start_submit_refused(tmp_path: Pa
     orch.runtime_adapter = _FakeAdapter("noesis-forge")
     task = _dispatched_coding(orch, idem="forge:lease:observe:1")
     orch.submit_handoff(task.task_id, _handoff())
-    submitted = orch.submit_candidate(task.task_id, candidate_revision="rev-1")
+    submitted = orch.submit_candidate(task.task_id, candidate_revision="rev-1", attempt_epoch=1)
     used = submitted.delegation.requests_used
     with pytest.raises(PolicyViolation, match="stale_attempt|released|required"):
-        orch.observe_budget(task.task_id, requests=3)
+        orch.observe_budget(task.task_id, requests=3, attempt_epoch=1)
     with pytest.raises(PolicyViolation, match="stale_attempt|released|required"):
         orch.observe_budget(
             task.task_id, requests=3, attempt_epoch=submitted.delegation.attempt_epoch
@@ -155,7 +155,7 @@ def test_released_observe_budget_consume_renew_start_submit_refused(tmp_path: Pa
     assert again is not None
     assert again.delegation.requests_used == used
     with pytest.raises(PolicyViolation, match="stale_attempt|released|required"):
-        orch.submit_candidate(task.task_id, candidate_revision="rev-2")
+        orch.submit_candidate(task.task_id, candidate_revision="rev-2", attempt_epoch=1)
 
 
 def test_stale_taskstore_snapshot_cannot_overwrite_newer_candidate(tmp_path: Path) -> None:
@@ -163,7 +163,7 @@ def test_stale_taskstore_snapshot_cannot_overwrite_newer_candidate(tmp_path: Pat
     orch.runtime_adapter = _FakeAdapter("noesis-forge")
     task = _dispatched_coding(orch, idem="forge:lease:cas:1")
     orch.submit_handoff(task.task_id, _handoff())
-    first = orch.submit_candidate(task.task_id, candidate_revision="v1", candidate_digest="sha256:v1")
+    first = orch.submit_candidate(task.task_id, candidate_revision="v1", candidate_digest="sha256:v1", attempt_epoch=1)
     stale = deepcopy(first)
     live = orch.store.get(task.task_id)
     assert live is not None
@@ -187,7 +187,7 @@ def test_stale_accept_snapshot_cannot_restore_superseded_candidate(tmp_path: Pat
     orch.runtime_adapter = _FakeAdapter("noesis-forge")
     task = _dispatched_coding(orch, idem="forge:lease:accept-race:1")
     orch.submit_handoff(task.task_id, _handoff())
-    orch.submit_candidate(task.task_id, candidate_revision="v1", candidate_digest="sha256:v1")
+    orch.submit_candidate(task.task_id, candidate_revision="v1", candidate_digest="sha256:v1", attempt_epoch=1)
     orch.record_review(
         task.task_id, stage="spec", verdict="PASS", reviewer="noesis-sentinel", candidate_revision="v1"
     )
@@ -237,7 +237,7 @@ def test_timezone_naive_execution_released_at_replay_fails_closed(tmp_path: Path
     orch.runtime_adapter = _FakeAdapter("noesis-forge")
     task = _dispatched_coding(orch, idem="forge:lease:naive:1")
     orch.submit_handoff(task.task_id, _handoff())
-    orch.submit_candidate(task.task_id, candidate_revision="rev-1")
+    orch.submit_candidate(task.task_id, candidate_revision="rev-1", attempt_epoch=1)
     raw_lines = orch_ledger.read_text(encoding="utf-8").splitlines()
     last = json.loads(raw_lines[-1])
     last["task"]["delegation"]["execution_released_at"] = "2020-01-01T00:00:00"

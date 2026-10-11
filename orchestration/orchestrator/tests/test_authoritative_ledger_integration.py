@@ -93,7 +93,7 @@ def review_and_accept(
     orch.submit_handoff(task.task_id, _handoff())
     orch.submit_candidate(
         task.task_id, candidate_revision=candidate, candidate_digest="sha256:" + candidate
-    )
+    , attempt_epoch=1)
     orch.record_review(
         task.task_id,
         stage="spec",
@@ -197,7 +197,7 @@ class TestDelegationLifecycleOnAuthoritativeLedger:
         orch.submit_handoff(task.task_id, _handoff())
         with pytest.raises(PolicyViolation, match="candidate_required"):
             orch.accept(task.task_id)
-        orch.submit_candidate(task.task_id, candidate_revision="rev-1")
+        orch.submit_candidate(task.task_id, candidate_revision="rev-1", attempt_epoch=1)
         with pytest.raises(PolicyViolation, match="spec_review_required"):
             orch.accept(task.task_id)
         orch.record_review(task.task_id, stage="spec", verdict="PASS",
@@ -209,7 +209,7 @@ class TestDelegationLifecycleOnAuthoritativeLedger:
         orch = Orchestrator(orch.store.ledger_path)
         task = dispatched_coding(orch)
         orch.submit_handoff(task.task_id, _handoff())
-        orch.submit_candidate(task.task_id, candidate_revision="rev-1")
+        orch.submit_candidate(task.task_id, candidate_revision="rev-1", attempt_epoch=1)
         with pytest.raises(PolicyViolation, match="spec_required"):
             orch.record_review(task.task_id, stage="quality", verdict="APPROVED",
                                reviewer="noesis-skeptic", candidate_revision="rev-1")
@@ -218,7 +218,7 @@ class TestDelegationLifecycleOnAuthoritativeLedger:
         orch = Orchestrator(orch.store.ledger_path)
         task = dispatched_coding(orch)
         orch.submit_handoff(task.task_id, _handoff())
-        orch.submit_candidate(task.task_id, candidate_revision="rev-1")
+        orch.submit_candidate(task.task_id, candidate_revision="rev-1", attempt_epoch=1)
         with pytest.raises(PolicyViolation, match="stale_candidate"):
             orch.record_review(task.task_id, stage="spec", verdict="PASS",
                                reviewer="noesis-sentinel", candidate_revision="rev-2")
@@ -227,7 +227,7 @@ class TestDelegationLifecycleOnAuthoritativeLedger:
         orch = Orchestrator(orch.store.ledger_path)
         task = dispatched_coding(orch)
         orch.submit_handoff(task.task_id, _handoff())
-        orch.submit_candidate(task.task_id, candidate_revision="rev-1")
+        orch.submit_candidate(task.task_id, candidate_revision="rev-1", attempt_epoch=1)
         orch.record_review(task.task_id, stage="spec", verdict="PASS",
                            reviewer="noesis-sentinel", candidate_revision="rev-1")
         orch.record_review(task.task_id, stage="spec", verdict="PASS",
@@ -244,7 +244,7 @@ class TestDelegationLifecycleOnAuthoritativeLedger:
         # task pushed to a new candidate cannot carry forward the old verdicts.
         task2 = dispatched_coding(orch, idem="forge:implement:validate_port:2")
         orch.submit_handoff(task2.task_id, _handoff())
-        orch.submit_candidate(task2.task_id, candidate_revision="a")
+        orch.submit_candidate(task2.task_id, candidate_revision="a", attempt_epoch=1)
         orch.record_review(task2.task_id, stage="spec", verdict="PASS",
                            reviewer="noesis-sentinel", candidate_revision="a")
         orch.record_review(task2.task_id, stage="quality", verdict="APPROVED",
@@ -271,7 +271,7 @@ class TestDelegationLifecycleOnAuthoritativeLedger:
         orch = Orchestrator(orch.store.ledger_path)
         task = dispatched_coding(orch)
         orch.submit_handoff(task.task_id, _handoff())
-        orch.submit_candidate(task.task_id, candidate_revision="rev-1")
+        orch.submit_candidate(task.task_id, candidate_revision="rev-1", attempt_epoch=1)
         orch.record_review(task.task_id, stage="spec", verdict="PASS",
                            reviewer="noesis-sentinel", candidate_revision="rev-1",
                            findings=[{"severity": "critical", "location": "validate_port.py"}])
@@ -285,9 +285,9 @@ class TestDelegationLifecycleOnAuthoritativeLedger:
         task = propose_coding(orch, idem="forge:budget:1")
         orch.mark_dispatched(task.task_id, runtime_profile="noesis-forge",
                              request_limit=2, budget_tokens=1000)
-        task = orch.observe_budget(task.task_id, requests=2, tokens=None)
+        task = orch.observe_budget(task.task_id, requests=2, tokens=None, attempt_epoch=1)
         assert task.delegation.tokens_used is None  # unknown stays None, never 0
-        orch.observe_budget(task.task_id, requests=1)
+        orch.observe_budget(task.task_id, requests=1, attempt_epoch=1)
         with pytest.raises(PolicyViolation, match="budget_exceeded"):
             orch.accept(task.task_id)
 
@@ -295,7 +295,7 @@ class TestDelegationLifecycleOnAuthoritativeLedger:
         orch = Orchestrator(orch.store.ledger_path)
         task = dispatched_coding(orch)
         orch.submit_handoff(task.task_id, _handoff())
-        orch.submit_candidate(task.task_id, candidate_revision="rev-1")
+        orch.submit_candidate(task.task_id, candidate_revision="rev-1", attempt_epoch=1)
         from datetime import timedelta
 
         live = orch.store.get(task.task_id)

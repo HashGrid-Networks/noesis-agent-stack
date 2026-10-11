@@ -12,6 +12,7 @@ import fcntl
 import json
 import os
 from contextlib import contextmanager
+from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -45,6 +46,14 @@ class TaskVersionConflict(RuntimeError):
         super().__init__(f"task version conflict: expected {expected}, got {actual}")
         self.expected = expected
         self.actual = actual
+
+
+class ReplayError(RuntimeError):
+    """The persisted fold is malformed; authority-sensitive writes must fail closed."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.replay_error = message
 
 
 def _parse_dt(value: str | None) -> datetime | None:
@@ -125,13 +134,22 @@ class TaskStore:
 
     def _append(self, event: str, task: TaskContract) -> None:
         record = {"event": event, "recorded_at": utcnow().isoformat(), "task": task.to_dict()}
-        line = json.dumps(record, sort_keys=True, default=str)
+        line = json.dumps(record, sort_keys=True, default=str) + "\n"
         # Append durably: write then fsync so a crash cannot lose an accepted
-        # transition that the caller has already been told about.
-        with self.ledger_path.open("a", encoding="utf-8") as fh:
-            fh.write(line + "\n")
-            fh.flush()
-            self._sync(fh.fileno())
+        # transition that the caller has already been told about. On write/fsync
+        # failure truncate back so disk matches the pre-call fold.
+        with self.ledger_path.open("a+", encoding="utf-8") as fh:
+            fh.seek(0, os.SEEK_END)
+            start = fh.tell()
+            try:
+                fh.write(line)
+                fh.flush()
+                self._sync(fh.fileno())
+            except Exception:
+                fh.seek(start)
+                fh.truncate(start)
+                fh.flush()
+                raise
 
     def append_control_event(self, event: str, payload: dict[str, Any]) -> dict[str, Any]:
         """Durably record a control-plane event (no embedded task).
@@ -186,7 +204,14 @@ class TaskStore:
         A malformed or truncated record stops replay and sets ``replay_error``;
         the control plane is responsible for failing closed (blocking dispatch)
         when that happens. A restart must never silently reopen dispatch.
+        Lock-aware: nested callers already holding the exclusive ledger lock
+        do not re-acquire it.
         """
+        with self._exclusive_lock():
+            self._replay_unlocked()
+
+    def _replay_unlocked(self) -> None:
+        """Fold persisted JSONL into memory. Caller must hold the exclusive lock."""
         self._tasks.clear()
         self._by_idempotency.clear()
         self.breaker_events.clear()
@@ -287,6 +312,8 @@ class TaskStore:
             runtime_profile=del_raw.get("runtime_profile"),
             candidate_revision=del_raw.get("candidate_revision"),
             candidate_digest=del_raw.get("candidate_digest"),
+            granted_candidate_revision=del_raw.get("granted_candidate_revision"),
+            granted_candidate_digest=del_raw.get("granted_candidate_digest"),
             contract_revision=del_raw.get("contract_revision"),
             baseline=del_raw.get("baseline"),
             accepted_by=del_raw.get("accepted_by"),
@@ -341,7 +368,7 @@ class TaskStore:
         with self._exclusive_lock():
             if self.ledger_path.exists():
                 self.replay()
-            current = self._tasks.get(str(task.task_id)) or task
+            current = deepcopy(self._tasks.get(str(task.task_id)) or task)
             existing = current.delegation.launch_reservation
             if existing:
                 return current, False
@@ -370,42 +397,62 @@ class TaskStore:
 
     def put(self, task: TaskContract, event: str = "task_updated", *, expected_task_version: int | None = None) -> TaskContract:
         with self._exclusive_lock():
-            if event == "task_proposed" and self.ledger_path.exists():
-                self.replay()
-                existing = self.find_by_idempotency_key(task.idempotency_key)
-                if existing is not None:
-                    return existing
+            if self.ledger_path.exists():
+                self._replay_unlocked()
+            if self.replay_error:
+                raise ReplayError(self.replay_error)
+            if event == "task_proposed":
+                existing_id = self._by_idempotency.get(task.idempotency_key)
+                if existing_id is not None:
+                    return deepcopy(self._tasks[existing_id])
             tid = str(task.task_id)
             current = self._tasks.get(tid)
             incoming = int(getattr(task, "task_version", 0) or 0)
-            if current is not None:
-                observed = int(getattr(current, "task_version", 0) or 0)
-                if expected_task_version is not None and expected_task_version != observed:
-                    raise TaskVersionConflict(expected_task_version, observed)
-                if incoming != observed:
-                    raise TaskVersionConflict(incoming, observed)
-                task.task_version = observed + 1
-            else:
-                task.task_version = incoming + 1
-            self._tasks[tid] = task
-            self._by_idempotency[task.idempotency_key] = tid
-            self._append(event, task)
-            return task
+            try:
+                if current is not None:
+                    observed = int(getattr(current, "task_version", 0) or 0)
+                    if expected_task_version is not None and expected_task_version != observed:
+                        raise TaskVersionConflict(expected_task_version, observed)
+                    if incoming != observed:
+                        raise TaskVersionConflict(incoming, observed)
+                    next_version = observed + 1
+                else:
+                    if expected_task_version is not None and expected_task_version != incoming:
+                        raise TaskVersionConflict(expected_task_version, incoming)
+                    next_version = incoming + 1
+            except TaskVersionConflict:
+                raise
+            committed = deepcopy(task)
+            committed.task_version = next_version
+            try:
+                self._append(event, committed)
+            except Exception:
+                if self.ledger_path.exists():
+                    self._replay_unlocked()
+                raise
+            self._tasks[tid] = deepcopy(committed)
+            self._by_idempotency[committed.idempotency_key] = tid
+            task.task_version = next_version
+            return deepcopy(committed)
 
     def get(self, task_id: str | UUID) -> TaskContract | None:
-        return self._tasks.get(str(task_id))
+        task = self._tasks.get(str(task_id))
+        return deepcopy(task) if task is not None else None
 
     def find_by_idempotency_key(self, key: str) -> TaskContract | None:
         task_id = self._by_idempotency.get(key)
-        return self._tasks.get(task_id) if task_id else None
+        task = self._tasks.get(task_id) if task_id else None
+        return deepcopy(task) if task is not None else None
 
     def all_tasks(self) -> dict[str, TaskContract]:
-        return dict(self._tasks)
+        return {tid: deepcopy(task) for tid, task in self._tasks.items()}
 
     def list_by_state(self, state: str) -> list[TaskContract]:
-        return [t for t in self._tasks.values() if t.state == state]
+        return [deepcopy(t) for t in self._tasks.values() if t.state == state]
 
     def list_by_correlation(self, correlation_id: str | UUID) -> list[TaskContract]:
         return [
-            t for t in self._tasks.values() if str(t.correlation_id) == str(correlation_id)
+            deepcopy(t)
+            for t in self._tasks.values()
+            if str(t.correlation_id) == str(correlation_id)
         ]

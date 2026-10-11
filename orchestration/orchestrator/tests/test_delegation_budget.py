@@ -19,6 +19,7 @@ from app.delegation import (
     DelegationStore,
     HandoffEnvelope,
     MessageType,
+    ORCHESTRATOR_ID,
 )
 
 
@@ -134,11 +135,12 @@ def test_concurrent_reservations_are_atomic(tmp_path: Path) -> None:
 def test_consume_never_exceeds_reservation(tmp_path: Path) -> None:
     store = _store(tmp_path)
     store.process(_assign("t1", requirement=6.0))
-    store.consume_budget("t1", 4.0, by="noesis-forge")
-    task = store.consume_budget("t1", 2.0, by="noesis-forge")
+    store.mark_ready("t1", by=ORCHESTRATOR_ID)
+    store.consume_budget("t1", 4.0, by="noesis-forge", expected_attempt_epoch=1)
+    task = store.consume_budget("t1", 2.0, by="noesis-forge", expected_attempt_epoch=1)
     assert task.budget_consumed == 6.0
     with pytest.raises(ActivationError, match="budget_overconsumption"):
-        store.consume_budget("t1", 0.1, by="noesis-forge")
+        store.consume_budget("t1", 0.1, by="noesis-forge", expected_attempt_epoch=1)
 
 
 def test_consume_requires_assignee(tmp_path: Path) -> None:
@@ -154,7 +156,8 @@ def test_budget_state_survives_restart(tmp_path: Path) -> None:
     ledger = tmp_path / "delegated-tasks.jsonl"
     store = DelegationStore(ledger)
     store.process(_assign("t1", root="root-1", requirement=6.0, cap=10.0))
-    store.consume_budget("t1", 2.5, by="noesis-forge")
+    store.mark_ready("t1", by=ORCHESTRATOR_ID)
+    store.consume_budget("t1", 2.5, by="noesis-forge", expected_attempt_epoch=1)
 
     reloaded = DelegationStore(ledger)
     task = reloaded.get("t1")

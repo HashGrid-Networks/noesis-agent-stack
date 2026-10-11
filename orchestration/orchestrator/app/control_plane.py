@@ -59,6 +59,7 @@ from app.store import (
     BREAKER_RESET_EVENT,
     BREAKER_TRIP_EVENT,
     DEFAULT_LEDGER,
+    ReplayError,
     TaskStore,
     TaskVersionConflict,
 )
@@ -195,6 +196,11 @@ class Orchestrator:
         """
         if depth_exceeded(parent_task_id, max_depth):
             raise RoutingBlocked("depth_exceeded", "subordinate orchestration depth/fanout limit exceeded")
+        if self.store.replay_error or self.breaker.is_open:
+            raise RoutingBlocked(
+                "launch_blocked",
+                f"fail-closed: {self.store.replay_error or self.breaker.reason or 'dispatch breaker open'}",
+            )
         selection = self.select_specialist(
             intent,
             required_capability=required_capability,
@@ -677,7 +683,12 @@ class Orchestrator:
 
         # Admission policy runs before anything is persisted.
         policy.validate_admission(task)
-        return self.store.put(task, event="task_proposed")
+        if self.store.replay_error:
+            raise PolicyViolation("replay_error", self.store.replay_error)
+        try:
+            return self.store.put(task, event="task_proposed")
+        except ReplayError as exc:
+            raise PolicyViolation("replay_error", str(exc)) from exc
 
     # -------------------------------------------------------------- approval --
 
@@ -798,6 +809,8 @@ class Orchestrator:
         task = self._require(task_id)
         task.transition_to("running")
         task.retry.attempts += 1
+        if task.delegation.attempt_epoch is None:
+            task.delegation.attempt_epoch = 1
         return self.store.put(task, event="task_started")
 
     # ------------------------------------------------------------- outcomes --
@@ -855,6 +868,8 @@ class Orchestrator:
             task.delegation.request_limit = request_limit
         if budget_tokens is not None:
             task.delegation.budget_tokens = budget_tokens
+        if task.delegation.attempt_epoch is None:
+            task.delegation.attempt_epoch = 1
         return self.store.put(task, event="task_dispatched")
 
     def submit_candidate(
@@ -871,8 +886,9 @@ class Orchestrator:
         revision, so an approval can never apply to a stale diff. Submission
         releases execution ownership for the current attempt_epoch. A different
         revision or digest never mints a new attempt; only grant_new_attempt
-        increments attempt_epoch. attempt_epoch is required when a persisted
-        epoch or release is present (omission fails closed).
+        increments attempt_epoch. Workers never invent an epoch from absence;
+        attempt_epoch is always required and must match the orchestrator-authored
+        current epoch. Submit must match any granted candidate revision/digest.
         """
         task = self._require(task_id)
         if task.delegation.execution_revoked:
@@ -892,30 +908,38 @@ class Orchestrator:
         digest_changed = prior_revision is not None and prior_digest != candidate_digest
         current_epoch = task.delegation.attempt_epoch
         released = task.delegation.execution_released_at
-        if current_epoch is None and released is None:
-            if attempt_epoch is not None:
-                raise PolicyViolation(
-                    "stale_attempt_report",
-                    "attempt_epoch mismatch",
-                )
-        else:
-            if attempt_epoch is None:
-                raise PolicyViolation(
-                    "stale_attempt_report",
-                    "attempt_epoch is required",
-                )
-            if current_epoch != attempt_epoch:
-                raise PolicyViolation(
-                    "stale_attempt_report",
-                    f"attempt_epoch {attempt_epoch} != current {current_epoch}",
-                )
-            if released is not None and (revision_changed or digest_changed):
-                raise PolicyViolation(
-                    "stale_attempt_report",
-                    "execution already released for this epoch",
-                )
         if current_epoch is None:
-            task.delegation.attempt_epoch = 1
+            raise PolicyViolation(
+                "stale_attempt_report",
+                "attempt_epoch is required",
+            )
+        if attempt_epoch is None:
+            raise PolicyViolation(
+                "stale_attempt_report",
+                "attempt_epoch is required",
+            )
+        if current_epoch != attempt_epoch:
+            raise PolicyViolation(
+                "stale_attempt_report",
+                f"attempt_epoch {attempt_epoch} != current {current_epoch}",
+            )
+        if released is not None and (revision_changed or digest_changed):
+            raise PolicyViolation(
+                "stale_attempt_report",
+                "execution already released for this epoch",
+            )
+        granted_rev = task.delegation.granted_candidate_revision
+        granted_dig = task.delegation.granted_candidate_digest
+        if granted_rev is not None and granted_rev != candidate_revision:
+            raise PolicyViolation(
+                "granted_candidate_mismatch",
+                f"candidate_revision '{candidate_revision}' != granted '{granted_rev}'",
+            )
+        if granted_dig is not None and granted_dig != candidate_digest:
+            raise PolicyViolation(
+                "granted_candidate_mismatch",
+                f"candidate_digest '{candidate_digest}' != granted '{granted_dig}'",
+            )
         if revision_changed or digest_changed:
             task.delegation.reviews = [] if digest_changed else [
                 r
@@ -944,6 +968,7 @@ class Orchestrator:
         expected_task_version: int,
         intended_assignee: str | None = None,
         intended_candidate_revision: str | None = None,
+        intended_candidate_digest: str | None = None,
     ) -> TaskContract:
         """Orchestrator-controlled new attempt. Increments attempt_epoch.
 
@@ -976,8 +1001,12 @@ class Orchestrator:
         task.delegation.execution_released_at = None
         task.delegation.reviews = []
         if intended_candidate_revision is not None:
+            task.delegation.granted_candidate_revision = intended_candidate_revision
             task.delegation.candidate_revision = intended_candidate_revision
-            task.delegation.candidate_digest = None
+            task.delegation.candidate_digest = intended_candidate_digest
+            task.delegation.granted_candidate_digest = intended_candidate_digest
+        elif intended_candidate_digest is not None:
+            task.delegation.granted_candidate_digest = intended_candidate_digest
         try:
             return self.store.put(
                 task, event="new_attempt_granted", expected_task_version=expected_task_version
@@ -1057,7 +1086,7 @@ class Orchestrator:
         Unknown usage is tracked as ``None`` (never 0). This is an honest,
         minimal accounting control; it does not claim provider-level financial
         enforcement the runtime cannot supply. After a persisted attempt_epoch
-        or execution_released_at, the current epoch is mandatory and released
+        the current epoch is mandatory. Absence is not permission. Released
         attempts are refused.
         """
         task = self._require(task_id)
@@ -1068,19 +1097,18 @@ class Orchestrator:
             )
         current_epoch = task.delegation.attempt_epoch
         released = task.delegation.execution_released_at
-        if current_epoch is not None or released is not None:
-            if attempt_epoch is None:
-                raise PolicyViolation("stale_attempt_report", "attempt_epoch is required")
-            if current_epoch != attempt_epoch:
-                raise PolicyViolation(
-                    "stale_attempt_report",
-                    f"attempt_epoch {attempt_epoch} != current {current_epoch}",
-                )
-            if released is not None:
-                raise PolicyViolation(
-                    "stale_attempt_report",
-                    "execution already released",
-                )
+        if current_epoch is None or attempt_epoch is None:
+            raise PolicyViolation("stale_attempt_report", "attempt_epoch is required")
+        if current_epoch != attempt_epoch:
+            raise PolicyViolation(
+                "stale_attempt_report",
+                f"attempt_epoch {attempt_epoch} != current {current_epoch}",
+            )
+        if released is not None:
+            raise PolicyViolation(
+                "stale_attempt_report",
+                "execution already released",
+            )
         task.delegation.requests_used += int(requests)
         if tokens is not None:
             task.delegation.tokens_used = (task.delegation.tokens_used or 0) + int(tokens)
@@ -1414,6 +1442,8 @@ class Orchestrator:
     # ---------------------------------------------------------------- helper --
 
     def _require(self, task_id: str | UUID) -> TaskContract:
+        if self.store.replay_error:
+            raise PolicyViolation("replay_error", self.store.replay_error)
         task = self.store.get(task_id)
         if task is None:
             raise PolicyViolation("unknown_task", f"no task contract with id {task_id}")

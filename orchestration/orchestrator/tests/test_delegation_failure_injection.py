@@ -59,7 +59,7 @@ def _assign(*, task_id: str, sender: str = "noesis-orchestrator", epoch: int = 1
 
 def _to_verifying(store: DelegationStore, task_id: str, *, rev: str = "rev-1") -> None:
     store.mark_ready(task_id, by="noesis-orchestrator")
-    store.start_running(task_id, by="noesis-forge")
+    store.start_running(task_id, by="noesis-forge", expected_attempt_epoch=1)
     store.submit_verifying(task_id, by="noesis-forge", expected_attempt_epoch=1, candidate_revision=rev)
 
 
@@ -92,7 +92,7 @@ def test_duplicate_result_same_revision_is_idempotent(tmp_path: Path) -> None:
     task_id = _task_id()
     store.process(_assign(task_id=task_id))
     store.mark_ready(task_id, by="noesis-orchestrator")
-    store.start_running(task_id, by="noesis-forge")
+    store.start_running(task_id, by="noesis-forge", expected_attempt_epoch=1)
     first = store.submit_verifying(task_id, by="noesis-forge", expected_attempt_epoch=1, candidate_revision="rev-1")
     second = store.submit_verifying(task_id, by="noesis-forge", expected_attempt_epoch=1, candidate_revision="rev-1")
 
@@ -156,7 +156,7 @@ def test_stale_expected_version_rejects_start(tmp_path: Path) -> None:
     current = store.get(task_id)
 
     with pytest.raises(ActivationError):
-        store.start_running(task_id, by="noesis-forge", expected_task_version=current.version - 1)
+        store.start_running(task_id, by="noesis-forge", expected_task_version=current.version - 1, expected_attempt_epoch=1)
 
 
 # ------------------------------------------------------------- cancellation --
@@ -169,7 +169,7 @@ def test_cancel_prevents_new_work(tmp_path: Path) -> None:
 
     assert store.get(task_id).state is TaskState.cancelled
     with pytest.raises(ActivationError):
-        store.start_running(task_id, by="noesis-forge")
+        store.start_running(task_id, by="noesis-forge", expected_attempt_epoch=1)
     with pytest.raises(ActivationError):
         store.accept(task_id, by="noesis-orchestrator")
 
@@ -225,7 +225,7 @@ def test_assignee_cannot_review_its_own_result_regardless_of_profile(tmp_path: P
     assign = _assign(task_id=tid)
     store.process(replace(assign, recipient_id="noesis-substrate"))
     store.mark_ready(tid, by="noesis-orchestrator")
-    store.start_running(tid, by="noesis-substrate")
+    store.start_running(tid, by="noesis-substrate", expected_attempt_epoch=1)
     store.submit_verifying(tid, by="noesis-substrate", expected_attempt_epoch=1, candidate_revision="rev-1")
 
     with pytest.raises(ActivationError, match="cannot review its own work"):
@@ -250,7 +250,7 @@ def test_restart_between_every_transition_preserves_lifecycle(tmp_path: Path) ->
     store = DelegationStore(ledger)
     assert store.get(tid).state is TaskState.ready
 
-    store.start_running(tid, by="noesis-forge")
+    store.start_running(tid, by="noesis-forge", expected_attempt_epoch=1)
     store = DelegationStore(ledger)
     assert store.get(tid).state is TaskState.running
     assert store.get(tid).lease is not None and store.get(tid).lease.is_active
@@ -309,7 +309,7 @@ def test_stale_start_after_restart_requires_ready_gate(tmp_path: Path) -> None:
     store = DelegationStore(ledger)
 
     with pytest.raises(ActivationError, match="not ready"):
-        store.start_running(tid, by="noesis-forge")
+        store.start_running(tid, by="noesis-forge", expected_attempt_epoch=1)
     assert store.get(tid).state is TaskState.assigned
 
 
@@ -320,9 +320,10 @@ def test_wrong_assignee_start_rejected(tmp_path: Path) -> None:
     store.mark_ready(tid, by="noesis-orchestrator")
 
     with pytest.raises(ActivationError, match="only the assigned specialist"):
-        store.start_running(tid, by="noesis-grid")
+        store.start_running(tid, by="noesis-grid", expected_attempt_epoch=1)
     assert store.get(tid).state is TaskState.ready
-    assert store.get(tid).lease is None
+    assert store.get(tid).lease is not None
+    assert store.get(tid).lease.attempt_epoch == 1
 
 
 def test_cancel_persisted_before_termination_confirmation_blocks_all_work(tmp_path: Path) -> None:
@@ -332,7 +333,7 @@ def test_cancel_persisted_before_termination_confirmation_blocks_all_work(tmp_pa
     store = DelegationStore(ledger)
     store.process(_assign(task_id=tid))
     store.mark_ready(tid, by="noesis-orchestrator")
-    store.start_running(tid, by="noesis-forge")
+    store.start_running(tid, by="noesis-forge", expected_attempt_epoch=1)
     store.cancel(tid, by="noesis-orchestrator", reason="operator stop")
     # Crash before termination confirmation / downstream cleanup.
     store = DelegationStore(ledger)
@@ -341,7 +342,7 @@ def test_cancel_persisted_before_termination_confirmation_blocks_all_work(tmp_pa
     assert task.state is TaskState.cancelled
     assert task.lease is not None and not task.lease.is_active  # revoked
     with pytest.raises(ActivationError):
-        store.start_running(tid, by="noesis-forge")
+        store.start_running(tid, by="noesis-forge", expected_attempt_epoch=1)
     with pytest.raises(ActivationError):
         store.submit_verifying(tid, by="noesis-forge", expected_attempt_epoch=1, candidate_revision="rev-1")
     with pytest.raises(ActivationError):

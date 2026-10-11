@@ -103,11 +103,8 @@ def test_malformed_ledger_fails_closed(tmp_path):
     assert orch2.breaker.manually_tripped is True
     assert "fail-closed" in orch2.breaker.reason
 
-    # Tasks replayed before the corruption remain readable.
-    task = _make_task(orch2, "post-corruption-001")
-    _drive_to_queued(orch2, task)
-    with pytest.raises(PolicyViolation):
-        orch2.claim(task.task_id, claimed_by="noesis-forge")
+    with pytest.raises(PolicyViolation, match="replay"):
+        _make_task(orch2, "post-corruption-001")
 
 
 def test_stop_write_failure_raises_and_fails_closed(tmp_path, monkeypatch):

@@ -74,7 +74,7 @@ class TestSignedLifecycle:
         auth = _auth()
         task = store.process(auth.apply(_assign("t-auth-2")))
         task = store.mark_ready(task.task_id, by="noesis-orchestrator")
-        task = store.start_running(task.task_id, by="noesis-forge")
+        task = store.start_running(task.task_id, by="noesis-forge", expected_attempt_epoch=1)
         task = store.submit_verifying(
             task.task_id, by="noesis-forge", expected_attempt_epoch=1, candidate_revision="rev-a"
         )

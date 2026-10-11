@@ -63,7 +63,7 @@ def planner(store: DelegationStore) -> DeliveryPlanner:
 
 def _to_verifying(store: DelegationStore, task_id: str, candidate: str = "cand-1") -> None:
     store.mark_ready(task_id, by=ORCHESTRATOR_ID)
-    store.start_running(task_id, by="noesis-forge")
+    store.start_running(task_id, by="noesis-forge", expected_attempt_epoch=1)
     store.submit_verifying(task_id, by="noesis-forge", expected_attempt_epoch=1, candidate_revision=candidate)
 
 
@@ -163,7 +163,7 @@ def test_no_candidate_is_blocked_on_evidence(planner, store):
 def test_active_attempt_yields_wait_for_existing_attempt(planner, store):
     _assign(store, "t1")
     store.mark_ready("t1", by=ORCHESTRATOR_ID)
-    store.start_running("t1", by="noesis-forge")
+    store.start_running("t1", by="noesis-forge", expected_attempt_epoch=1)
     decision = planner.plan("t1")
     assert decision.disposition is PlannerDisposition.wait_for_existing_attempt
     assert decision.proposed_action is None
@@ -174,7 +174,7 @@ def test_active_attempt_yields_wait_for_existing_attempt(planner, store):
 def test_expired_lease_marks_suspect_and_blocks_on_review(planner, store):
     _assign(store, "t1")
     store.mark_ready("t1", by=ORCHESTRATOR_ID)
-    store.start_running("t1", by="noesis-forge")
+    store.start_running("t1", by="noesis-forge", expected_attempt_epoch=1)
     store.expire_lease("t1")
     task = store.get("t1")
     # Expiry marks the attempt suspect (blocked), never silently successful.
@@ -319,7 +319,7 @@ def test_no_progress_detection(planner, store):
     assert second.no_progress is True
     # A planner-visible change (candidate submitted) resets the flag.
     store.mark_ready("t1", by=ORCHESTRATOR_ID)
-    store.start_running("t1", by="noesis-forge")
+    store.start_running("t1", by="noesis-forge", expected_attempt_epoch=1)
     store.submit_verifying("t1", by="noesis-forge", expected_attempt_epoch=1, candidate_revision="cand-1")
     third = planner.plan("t1", previous=second)
     assert third.no_progress is False
@@ -345,7 +345,7 @@ def test_planning_never_mutates_authoritative_state(planner, store):
 def test_every_decision_carries_source_references(planner, store):
     _assign(store, "t1")
     store.mark_ready("t1", by=ORCHESTRATOR_ID)
-    store.start_running("t1", by="noesis-forge")
+    store.start_running("t1", by="noesis-forge", expected_attempt_epoch=1)
     scenarios = {
         "wait": planner.plan("t1"),
     }
@@ -392,7 +392,7 @@ def test_expired_or_revoked_authority_does_not_propose_action(planner, store):
 
     _assign(store, "t-running-cand")
     store.mark_ready("t-running-cand", by=ORCHESTRATOR_ID)
-    store.start_running("t-running-cand", by="noesis-forge")
+    store.start_running("t-running-cand", by="noesis-forge", expected_attempt_epoch=1)
     task = store.get("t-running-cand")
     store._tasks["t-running-cand"] = replace(
         task,

@@ -544,6 +544,20 @@
         "execution_revoked": {
           "type": "boolean",
           "default": false
+        },
+        "granted_candidate_revision": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Orchestrator-authored candidate revision bound to the current attempt_epoch. Worker submit must match when set."
+        },
+        "granted_candidate_digest": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Orchestrator-authored candidate digest bound to the current attempt_epoch. Worker submit must match when set."
         }
       }
     },

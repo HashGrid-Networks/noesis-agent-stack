@@ -40,7 +40,7 @@ def _running_review_task(orch: Orchestrator, *, idem: str = "review-gate"):
 def _candidate_ready(orch: Orchestrator, *, idem: str = "review-gate"):
     task = _running_review_task(orch, idem=idem)
     orch.submit_handoff(task.task_id, _handoff())
-    orch.submit_candidate(task.task_id, candidate_revision="rev-1", candidate_digest="sha256:rev-1")
+    orch.submit_candidate(task.task_id, candidate_revision="rev-1", candidate_digest="sha256:rev-1", attempt_epoch=1)
     return orch.store.get(task.task_id)
 
 

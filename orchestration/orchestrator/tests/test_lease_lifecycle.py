@@ -61,7 +61,7 @@ def _assign(store: DelegationStore, task_id: str) -> None:
 def _running_task(store: DelegationStore, task_id: str):
     _assign(store, task_id)
     store.mark_ready(task_id, by=ORCHESTRATOR_ID)
-    return store.start_running(task_id, by="noesis-forge")
+    return store.start_running(task_id, by="noesis-forge", expected_attempt_epoch=1)
 
 
 @pytest.fixture
@@ -295,7 +295,7 @@ def test_accept_after_execution_lease_expiry_without_reviving_permission(
     assert accepted.state is TaskState.completed
 
     with pytest.raises(ActivationError, match="stale_attempt|released|not ready"):
-        store.start_running("t-accept-expired", by="noesis-forge")
+        store.start_running("t-accept-expired", by="noesis-forge", expected_attempt_epoch=1)
     with pytest.raises(ActivationError, match="stale_attempt|revoked|released"):
         store.submit_verifying(
             "t-accept-expired",
@@ -539,7 +539,7 @@ def test_control_plane_submit_releases_and_accept_ignores_claim_lease_expiry(tmp
     orch.runtime_adapter = _FakeAdapter("noesis-forge")
     task = _dispatched_coding(orch)
     orch.submit_handoff(task.task_id, _handoff())
-    submitted = orch.submit_candidate(task.task_id, candidate_revision="rev-1", candidate_digest="sha256:rev-1")
+    submitted = orch.submit_candidate(task.task_id, candidate_revision="rev-1", candidate_digest="sha256:rev-1", attempt_epoch=1)
     assert submitted.delegation.execution_released_at is not None
     assert submitted.delegation.attempt_epoch == 1
 
@@ -577,7 +577,7 @@ def test_control_plane_new_candidate_bumps_epoch(tmp_path: Path) -> None:
     orch.runtime_adapter = _FakeAdapter("noesis-forge")
     task = _dispatched_coding(orch, idem="forge:lease:validate_port:2")
     orch.submit_handoff(task.task_id, _handoff())
-    first = orch.submit_candidate(task.task_id, candidate_revision="a")
+    first = orch.submit_candidate(task.task_id, candidate_revision="a", attempt_epoch=1)
     first_epoch = first.delegation.attempt_epoch
     orch.record_review(task.task_id, stage="spec", verdict="PASS", reviewer="noesis-sentinel", candidate_revision="a")
     orch.record_review(task.task_id, stage="quality", verdict="APPROVED", reviewer="noesis-skeptic", candidate_revision="a")

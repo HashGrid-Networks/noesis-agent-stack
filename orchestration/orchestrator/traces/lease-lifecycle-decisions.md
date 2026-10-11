@@ -122,3 +122,19 @@ clear it. `TaskStore.put` refuses a stale snapshot over a newer
 `operator == "noesis-orchestrator"` remains an in-process caller-label
 prerequisite, not authentication. Production must not expose `accept` or
 `grant_new_attempt` to untrusted callers.
+
+## persisted-fold transaction boundary (2026-10-11 changed approach A)
+
+Design: Sentinel r3 R3-F1/F2/F3 and R3-N1/N2; approved Alternative A.
+Path: `TaskStore.put` / `get` / `_replay_unlocked`; `Orchestrator.mark_dispatched`
+/ `submit_candidate` / `grant_new_attempt` / `observe_budget` / `_require`;
+`DelegationStore.mark_ready` / `start_running` / `submit_verifying`.
+Decision: every `put` holds the exclusive ledger lock, folds persisted JSONL,
+CAS against the folded `task_version`, appends at most one next version, and
+installs a detached winner only after durable append/fsync. `get()` returns a
+deepcopy. Workers never invent `attempt_epoch`; dispatch/mark_ready persist
+orchestrator-authored epoch 1; `grant_new_attempt` is the only post-dispatch
+increment. Worker submit must match granted candidate revision/digest when
+set. `replay_error` fails closed on every `_require` mutation. Historical
+records without epoch remain readable and are not executable until grant.
+No historical ledger events are rewritten.
