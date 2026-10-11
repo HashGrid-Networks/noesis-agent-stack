@@ -4,7 +4,7 @@ role: software-engineer
 tier: primary-operator
 persistence: persistent
 domain: software engineering, code gen, IaC
-reports_to: noesis-core
+reports_to: noesis-orchestrator
 delegates_to: none
 reviewed_by: noesis-sentinel, noesis-skeptic
 ---

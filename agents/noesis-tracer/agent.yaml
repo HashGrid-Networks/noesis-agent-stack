@@ -31,7 +31,7 @@ agent:
     - Labels fact/allegation/inference/unknown strictly
     - User approval required for any PII collection beyond public record
   collaboration:
-    reports_to: noesis-core
+    reports_to: noesis-orchestrator
     delegates_to: []
     reviewed_by: [noesis-skeptic]
   deployment:

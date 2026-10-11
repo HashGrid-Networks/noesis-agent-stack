@@ -4,7 +4,7 @@ role: osint-specialist
 tier: specialist
 persistence: on-demand
 domain: OSINT, evidence, timeline
-reports_to: noesis-core
+reports_to: noesis-orchestrator
 delegates_to: none
 reviewed_by: noesis-skeptic; escalates to user on PII collection beyond public record
 ---

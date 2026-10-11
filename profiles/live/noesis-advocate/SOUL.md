@@ -4,7 +4,7 @@ role: legal-advocacy-support
 tier: specialist
 persistence: on-demand
 domain: legal/administrative advocacy support
-reports_to: noesis-core
+reports_to: noesis-orchestrator
 delegates_to: none
 reviewed_by: noesis-skeptic; ultimate review by human counsel; escalates to user before any external submission
 ---

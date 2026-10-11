@@ -26,8 +26,10 @@
     "created_by"
   ],
   "properties": {
-    "schema_version": { "type": "string", "const": "1.0" },
-
+    "schema_version": {
+      "type": "string",
+      "const": "1.0"
+    },
     "task_id": {
       "type": "string",
       "format": "uuid",
@@ -39,23 +41,31 @@
       "description": "Shared identifier binding every task in one orchestration graph."
     },
     "parent_task_id": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "format": "uuid",
       "description": "Parent task when this contract was produced by decomposition."
     },
     "traceparent": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "pattern": "^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$"
     },
-
-    "title": { "type": "string", "minLength": 3, "maxLength": 200 },
+    "title": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 200
+    },
     "intent": {
       "type": "string",
       "minLength": 10,
       "maxLength": 4000,
       "description": "What the assignee must accomplish, stated so a fresh session can act on it without chat history."
     },
-
     "assignee_profile": {
       "type": "string",
       "description": "Profile name that MUST exist in profiles/noesis-roster.yaml. Never a free-form agent label."
@@ -65,13 +75,20 @@
       "description": "Capability that the assignee must declare in agents/<assignee>/agent.yaml capabilities."
     },
     "reviewer_profile": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "description": "Reviewer-only profile (noesis-sentinel / noesis-skeptic) that must accept the result before it may succeed."
     },
-
     "risk_tier": {
       "type": "string",
-      "enum": ["r0", "r1", "r2", "r3"],
+      "enum": [
+        "r0",
+        "r1",
+        "r2",
+        "r3"
+      ],
       "description": "Risk classification per platform/risk-tiers.yaml. Ambiguity classifies to the higher tier."
     },
     "irreversible_operations": {
@@ -91,156 +108,575 @@
       },
       "default": []
     },
-
     "depends_on": {
       "type": "array",
       "description": "task_ids that MUST be in state 'succeeded' before this task may leave 'queued'.",
-      "items": { "type": "string", "format": "uuid" },
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      },
       "default": []
     },
-
     "idempotency_key": {
       "type": "string",
       "minLength": 3,
       "maxLength": 200,
       "description": "Stable dedupe key. Re-delivery of the same key returns the existing task instead of creating a duplicate."
     },
-
     "acceptance_criteria": {
       "type": "array",
       "description": "Objective, checkable conditions. A task cannot succeed with an empty acceptance list.",
       "minItems": 1,
-      "items": { "type": "string", "minLength": 3, "maxLength": 500 }
+      "items": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 500
+      }
     },
     "verification": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["method", "evidence_required"],
+      "required": [
+        "method",
+        "evidence_required"
+      ],
       "properties": {
         "method": {
           "type": "string",
-          "enum": ["automated_test", "command_output", "reviewer_signoff", "schema_validation", "human_inspection"]
+          "enum": [
+            "automated_test",
+            "command_output",
+            "reviewer_signoff",
+            "schema_validation",
+            "human_inspection"
+          ]
         },
-        "command": { "type": ["string", "null"], "description": "Command or check the executor ran. Never contains credentials." },
-        "evidence_required": { "type": "boolean", "default": true }
+        "command": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Command or check the executor ran. Never contains credentials."
+        },
+        "evidence_required": {
+          "type": "boolean",
+          "default": true
+        }
       }
     },
-
-    "timeout_s": { "type": "integer", "minimum": 60, "maximum": 7200 },
+    "timeout_s": {
+      "type": "integer",
+      "minimum": 60,
+      "maximum": 7200
+    },
     "retry": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["max_attempts", "attempts"],
+      "required": [
+        "max_attempts",
+        "attempts"
+      ],
       "properties": {
-        "max_attempts": { "type": "integer", "minimum": 1, "maximum": 5 },
-        "attempts": { "type": "integer", "minimum": 0, "default": 0 },
-        "backoff_s": { "type": "integer", "minimum": 0, "default": 30 }
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        },
+        "attempts": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0
+        },
+        "backoff_s": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 30
+        }
       }
     },
-
     "approval": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["required", "state"],
+      "required": [
+        "required",
+        "state"
+      ],
       "properties": {
-        "required": { "type": "boolean" },
-        "state": { "type": "string", "enum": ["not_required", "pending", "granted", "denied"] },
-        "approved_by": { "type": ["string", "null"], "description": "Human operator identifier. Never an agent." },
-        "approved_at": { "type": ["string", "null"], "format": "date-time" },
+        "required": {
+          "type": "boolean"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "not_required",
+            "pending",
+            "granted",
+            "denied"
+          ]
+        },
+        "approved_by": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Human operator identifier. Never an agent."
+        },
+        "approved_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
         "approval_manifest_id": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "format": "uuid",
           "description": "For r3: the platform/approval-manifest.schema.json approval_id that binds this exact action."
         }
       }
     },
-
     "state": {
       "type": "string",
       "enum": [
-        "proposed", "approved", "queued", "claimed", "running",
-        "awaiting_review", "blocked", "failed", "succeeded", "cancelled"
+        "proposed",
+        "approved",
+        "queued",
+        "claimed",
+        "running",
+        "awaiting_review",
+        "blocked",
+        "failed",
+        "succeeded",
+        "cancelled"
       ]
     },
-
+    "task_version": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Compare-and-swap fence incremented on every TaskStore.put. Absent on legacy records and treated as 0. Not an authentication token."
+    },
     "handoff": {
-      "type": ["object", "null"],
+      "type": [
+        "object",
+        "null"
+      ],
       "description": "Structured evidence returned by the assignee. Required before succeeded.",
       "additionalProperties": false,
-      "required": ["summary", "artifacts", "verification_result"],
+      "required": [
+        "summary",
+        "artifacts",
+        "verification_result"
+      ],
       "properties": {
-        "summary": { "type": "string", "minLength": 10, "maxLength": 4000 },
+        "summary": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 4000
+        },
         "artifacts": {
           "type": "array",
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["path"],
+            "required": [
+              "path"
+            ],
             "properties": {
-              "path": { "type": "string" },
-              "checksum": { "type": ["string", "null"] },
-              "kind": { "type": ["string", "null"] }
+              "path": {
+                "type": "string"
+              },
+              "checksum": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "kind": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
             }
           }
         },
         "verification_result": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["passed", "evidence"],
+          "required": [
+            "passed",
+            "evidence"
+          ],
           "properties": {
-            "passed": { "type": "boolean" },
-            "evidence": { "type": "string", "minLength": 3, "maxLength": 8000 }
+            "passed": {
+              "type": "boolean"
+            },
+            "evidence": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 8000
+            }
           }
         },
-        "unmet_criteria": { "type": "array", "items": { "type": "string" }, "default": [] }
+        "unmet_criteria": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        }
       }
     },
-
     "claim": {
-      "type": ["object", "null"],
+      "type": [
+        "object",
+        "null"
+      ],
       "additionalProperties": false,
-      "required": ["claimed_by", "claimed_at", "lease_expires_at"],
+      "required": [
+        "claimed_by",
+        "claimed_at",
+        "lease_expires_at"
+      ],
       "properties": {
-        "claimed_by": { "type": "string" },
-        "claimed_at": { "type": "string", "format": "date-time" },
-        "lease_expires_at": { "type": "string", "format": "date-time" }
+        "claimed_by": {
+          "type": "string"
+        },
+        "claimed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "lease_expires_at": {
+          "type": "string",
+          "format": "date-time"
+        }
       }
     },
-
-    "created_at": { "type": "string", "format": "date-time" },
-    "created_by": { "type": "string", "description": "Originating profile; normally noesis-orchestrator." },
-    "updated_at": { "type": ["string", "null"], "format": "date-time" },
-    "terminal_reason": { "type": ["string", "null"], "maxLength": 1000 },
-    "labels": { "type": "array", "items": { "type": "string" }, "default": [] }
+    "delegation": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Extension of the task contract with delegation behavior and the event log/projection format noesis.delegated-task/v1. Authoritative lifecycle state always lives in tasks.jsonl; this field is the single-source delegation record including assignment epoch, active attempt, resolved runtime profile, current candidate revision, and revision-bound reviews.",
+      "properties": {
+        "assignment_epoch": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "runtime_profile": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "candidate_revision": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "candidate_digest": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "accepted_by": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "accepted_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "request_limit": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "requests_used": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "budget_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "tokens_used": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "approved_provider": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "approved_model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "launch_reservation": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": true,
+          "description": "Durable admission/reservation recorded before spawn. A reservation is not proof a process started or stopped."
+        },
+        "reviews": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "stage",
+              "verdict",
+              "reviewer",
+              "candidate_revision"
+            ],
+            "properties": {
+              "stage": {
+                "type": "string",
+                "enum": [
+                  "spec",
+                  "quality",
+                  "integration"
+                ]
+              },
+              "verdict": {
+                "type": "string"
+              },
+              "reviewer": {
+                "type": "string"
+              },
+              "candidate_revision": {
+                "type": "string"
+              },
+              "at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "findings": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "severity"
+                  ],
+                  "properties": {
+                    "severity": {
+                      "type": "string",
+                      "enum": [
+                        "critical",
+                        "important",
+                        "minor",
+                        "info"
+                      ]
+                    },
+                    "resolved": {
+                      "type": "boolean",
+                      "default": false
+                    },
+                    "location": {
+                      "type": "string"
+                    },
+                    "rationale": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "contract_revision": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Authoritative contract revision derived before reservation; null before the task has ever been claimed (deliberate pre-assignment state), a required non-null string from 'claimed' onward (see the root-level conditional); fail-closed on mismatch."
+        },
+        "baseline": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Repository HEAD or manifest digest used as the launch baseline; null before the task has ever been claimed (deliberate pre-assignment state), a required non-null string from 'claimed' onward (see the root-level conditional); fail-closed on mismatch."
+        },
+        "attempt_epoch": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Monotonic execution-attempt fence. Null on records written before this field existed; never invent authority on replay."
+        },
+        "execution_released_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "Timezone-aware instant execution ownership was released at candidate submission. Null means unknown/unreleased. Naive timestamps fail closed on replay."
+        },
+        "execution_revoked": {
+          "type": "boolean",
+          "default": false
+        },
+        "granted_candidate_revision": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Orchestrator-authored candidate revision bound to the current attempt_epoch. Worker submit must match when set."
+        },
+        "granted_candidate_digest": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Orchestrator-authored candidate digest bound to the current attempt_epoch. Worker submit must match when set."
+        }
+      }
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "created_by": {
+      "type": "string",
+      "description": "Originating profile; normally noesis-orchestrator."
+    },
+    "updated_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "terminal_reason": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000
+    },
+    "labels": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    }
   },
-
-  "examples": [{
-    "schema_version": "1.0",
-    "task_id": "6f1d2c3b-4a59-4e87-9b21-0c7d8e9f1a2b",
-    "correlation_id": "11112222-3333-4444-5555-666677778888",
-    "parent_task_id": null,
-    "traceparent": null,
-    "title": "Cross-validate mining-hashprice sources",
-    "intent": "Collect and cross-validate 2026 hashprice sources, labelling each claim verified/inference/unknown.",
-    "assignee_profile": "noesis-signal",
-    "required_capability": "cross_validate",
-    "reviewer_profile": null,
-    "risk_tier": "r0",
-    "irreversible_operations": [],
-    "depends_on": [],
-    "idempotency_key": "noesis-signal:cross_validate:hashprice:2026-09-18",
-    "acceptance_criteria": ["At least three independent sources cited", "Every claim labelled verified/inference/unknown"],
-    "verification": { "method": "reviewer_signoff", "command": null, "evidence_required": true },
-    "timeout_s": 900,
-    "retry": { "max_attempts": 2, "attempts": 0, "backoff_s": 30 },
-    "approval": { "required": false, "state": "not_required", "approved_by": null, "approved_at": null, "approval_manifest_id": null },
-    "state": "proposed",
-    "handoff": null,
-    "claim": null,
-    "created_at": "2026-09-18T12:00:00Z",
-    "created_by": "noesis-orchestrator",
-    "updated_at": null,
-    "terminal_reason": null,
-    "labels": ["research"]
-  }]
+  "allOf": [
+    {
+      "description": "Valid authoritative identity is required before/during execution. A task that has ever reached 'claimed' or beyond MUST carry a non-null, non-empty contract_revision and baseline (see app/models.py TaskContract.ensure_execution_identity); 'proposed'/'approved'/'queued' may deliberately omit identity (not-yet-assigned, never a fabricated value).",
+      "if": {
+        "properties": {
+          "state": {
+            "enum": [
+              "claimed",
+              "running",
+              "awaiting_review",
+              "succeeded"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "delegation": {
+            "type": "object",
+            "required": [
+              "contract_revision",
+              "baseline"
+            ],
+            "properties": {
+              "contract_revision": {
+                "type": "string",
+                "minLength": 1
+              },
+              "baseline": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "examples": [
+    {
+      "schema_version": "1.0",
+      "task_id": "6f1d2c3b-4a59-4e87-9b21-0c7d8e9f1a2b",
+      "correlation_id": "11112222-3333-4444-5555-666677778888",
+      "parent_task_id": null,
+      "traceparent": null,
+      "title": "Cross-validate mining-hashprice sources",
+      "intent": "Collect and cross-validate 2026 hashprice sources, labelling each claim verified/inference/unknown.",
+      "assignee_profile": "noesis-signal",
+      "required_capability": "cross_validate",
+      "reviewer_profile": null,
+      "risk_tier": "r0",
+      "irreversible_operations": [],
+      "depends_on": [],
+      "idempotency_key": "noesis-signal:cross_validate:hashprice:2026-09-18",
+      "acceptance_criteria": [
+        "At least three independent sources cited",
+        "Every claim labelled verified/inference/unknown"
+      ],
+      "verification": {
+        "method": "reviewer_signoff",
+        "command": null,
+        "evidence_required": true
+      },
+      "timeout_s": 900,
+      "retry": {
+        "max_attempts": 2,
+        "attempts": 0,
+        "backoff_s": 30
+      },
+      "approval": {
+        "required": false,
+        "state": "not_required",
+        "approved_by": null,
+        "approved_at": null,
+        "approval_manifest_id": null
+      },
+      "state": "proposed",
+      "handoff": null,
+      "claim": null,
+      "created_at": "2026-09-18T12:00:00Z",
+      "created_by": "noesis-orchestrator",
+      "updated_at": null,
+      "terminal_reason": null,
+      "labels": [
+        "research"
+      ]
+    }
+  ]
 }

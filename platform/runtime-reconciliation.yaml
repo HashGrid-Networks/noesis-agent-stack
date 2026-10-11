@@ -14,10 +14,13 @@ non_secret_extraction_rules:
 - record model alias or identifier only
 - do not copy API keys, env var values, tokens, cookies, secrets, private endpoints, or raw active config content
 profiles:
-- profile_id: noesis-core
+- profile_id: noesis-orchestrator
   profile_type: supervisor
   purpose: Noesis supervisor and router (Hermes-Core). Intake tasks, classify domain and risk tier, assign the narrowest-mandate
-    specialist, enforce approval gates; never executes domain work.
+    specialist, enforce approval gates; never executes domain work. Consolidated 2026-10-10 with the staged control-plane
+    orchestrator definition (plans, dispatches, supervises, and synthesizes cross-profile work through durable task contracts).
+  consolidated_from: [noesis-core, noesis-orchestrator]
+  runtime_backed_by: hermes-default-profile
   observed_runtime:
     source: active_hermes
     provider_lane: KIMI_CODE
@@ -27,35 +30,20 @@ profiles:
     provider_lane: KIMI_CODE
     model_alias_or_id: kimi-k2.7-code
     evidence: profiles/noesis-roster.yaml
+  # Retained as provenance from the consolidated staged record (was a separate
+  # entry reconciling ~/.hermes/profiles/noesis-orchestrator/config.yaml):
+  secondary_record_note: >-
+    The staged noesis-orchestrator record observed KIMI_CODE/kimi-k2.7-code active
+    against CLAUDE_CODE_PRO/claude-sonnet-5 declared (alignment: drift). Folded into
+    this single profile_id on consolidation; the default-profile runtime (above) backs
+    the consolidated entity. The drift finding is retained here as audit provenance
+    and remains subject to routing-matrix review before any model adoption.
   alignment: aligned
   resolution:
     state: needs_evidence
     rationale: Observed safe runtime route matches repository declaration, but live activation still requires review under
-      proposed policy.
-    required_gates:
-    - independent_provider_review
-    - qa_or_policy_gate
-    - routing_matrix_review
-    - evals/inference-routing.eval.yaml
-  target_routing_class: supervisor_control_plane
-- profile_id: noesis-orchestrator
-  profile_type: orchestrator
-  purpose: Noesis control-plane orchestrator. Plans, dispatches, supervises, and synthesizes cross-profile work through durable
-    task contracts; holds no terminal or execution authority and never performs irreversible operations itself.
-  observed_runtime:
-    source: active_hermes
-    provider_lane: KIMI_CODE
-    model_alias_or_id: kimi-k2.7-code
-    evidence: 'active profile metadata: ~/.hermes/profiles/noesis-orchestrator/config.yaml'
-  repo_declared:
-    provider_lane: CLAUDE_CODE_PRO
-    model_alias_or_id: claude-sonnet-5
-    evidence: profiles/noesis-roster.yaml
-  alignment: drift
-  resolution:
-    state: needs_evidence
-    rationale: Observed active route differs from repository declaration; do not adopt either side without routing-matrix
-      review.
+      proposed policy. A secondary runtime (profiles/noesis-orchestrator/config.yaml) showed provider drift at consolidation
+      time; do not adopt either side without routing-matrix review.
     required_gates:
     - independent_provider_review
     - qa_or_policy_gate

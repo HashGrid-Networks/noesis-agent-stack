@@ -153,6 +153,11 @@ class TestExamplePlanReviewExecuteWithApproval:
         # Reviewer-gated work parks in awaiting_review before it may succeed.
         parked = orch.store.get(execute.task_id)
         assert parked is not None and parked.state == "awaiting_review"
+        orch.submit_candidate(execute.task_id, candidate_revision="rev-1", candidate_digest="sha256:rev-1", attempt_epoch=1)
+        orch.record_review(execute.task_id, stage="spec", verdict="PASS",
+                           reviewer="noesis-sentinel", candidate_revision="rev-1")
+        orch.record_review(execute.task_id, stage="quality", verdict="APPROVED",
+                           reviewer="noesis-skeptic", candidate_revision="rev-1")
         assert orch.succeed(execute.task_id).state == "succeeded"
 
         result = orch.synthesize(graph)

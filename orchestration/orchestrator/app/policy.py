@@ -64,10 +64,11 @@ def validate_assignment(task: TaskContract) -> None:
         )
 
     if profile.is_reviewer_only:
-        raise PolicyViolation(
-            "reviewer_only_profile_cannot_execute",
-            f"'{profile.name}' is reviewer-only and cannot be assigned executing work",
-        )
+        if "review" not in task.labels:
+            raise PolicyViolation(
+                "reviewer_only_profile_cannot_execute",
+                f"'{profile.name}' is reviewer-only and cannot be assigned executing work",
+            )
 
     if profile.is_supervisor:
         raise PolicyViolation(

@@ -29,7 +29,7 @@ agent:
     - New agent profiles must define explicit non-goals and approval gates before deployment
     - Does not implement infra (hands to Substrate/Forge)
   collaboration:
-    reports_to: noesis-core
+    reports_to: noesis-orchestrator
     delegates_to: [noesis-forge, noesis-substrate]
     reviewed_by: [noesis-skeptic]
   deployment:

@@ -29,7 +29,7 @@ agent:
     - Distinguishes verified fact vs inference vs speculation explicitly
     - Never drafts legal/comms deliverables (hands to Advocate/Herald)
   collaboration:
-    reports_to: noesis-core
+    reports_to: noesis-orchestrator
     delegates_to: []
     reviewed_by: [noesis-skeptic]
   deployment:

@@ -4,7 +4,7 @@ role: infra-engineer
 tier: primary-operator
 persistence: persistent
 domain: infra, DevOps, cloud, networking
-reports_to: noesis-core
+reports_to: noesis-orchestrator
 delegates_to: none
 reviewed_by: noesis-sentinel, noesis-skeptic
 ---

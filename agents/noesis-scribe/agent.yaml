@@ -25,13 +25,13 @@ agent:
     terminal:
       backend: local
       cwd: /home/elvis/wiki
-  capabilities: [kb_struct, changelog, citation_preserve, cross_link, index_maintain]
+  capabilities: [kb_struct, changelog, citation_preserve, cross_link, index_maintain, provenance_archive]
   guardrails:
     - Preserves original source links/timestamps; never silently overwrites prior versions
     - Never originates technical content
     - Follows llm-wiki AGENTS.md (raw/ immutable, two-layer schema, git diff --check)
   collaboration:
-    reports_to: noesis-core
+    reports_to: noesis-orchestrator
     delegates_to: []
     reviewed_by: [noesis-steward]
   deployment:

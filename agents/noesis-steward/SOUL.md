@@ -4,7 +4,7 @@ role: chief-of-staff
 tier: primary-operator
 persistence: persistent
 domain: prioritization, triage, deadlines
-reports_to: noesis-core
+reports_to: noesis-orchestrator
 delegates_to: [noesis-cartographer]
 reviewed_by: none (routine); escalates to user for legal/financial deadlines
 ---

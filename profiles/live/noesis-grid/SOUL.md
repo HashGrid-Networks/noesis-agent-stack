@@ -4,7 +4,7 @@ role: data-analyst
 tier: specialist
 persistence: on-demand
 domain: data analysis, spreadsheets, reports
-reports_to: noesis-core
+reports_to: noesis-orchestrator
 delegates_to: none
 reviewed_by: noesis-skeptic (data-integrity-critical outputs)
 ---

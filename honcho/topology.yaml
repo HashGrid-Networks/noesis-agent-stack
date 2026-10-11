@@ -36,7 +36,7 @@ spec:
       peer_type: project
       workspace_id: noesis-prod
       owner: hermes-supervisor
-    - peer_id: supervisor:noesis-core
+    - peer_id: supervisor:noesis-orchestrator
       peer_type: agent
       workspace_id: noesis-prod
       owner: hermes-supervisor

@@ -4,7 +4,7 @@ role: code-reviewer
 tier: reviewer-only
 persistence: reviewer-only
 domain: code review, security, testing
-reports_to: noesis-core
+reports_to: noesis-orchestrator
 reviewed_by: none (independent reviewer; escalates critical issues to user)
 ---
 

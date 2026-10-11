@@ -7,7 +7,7 @@ prose. Layers:
   1. Curation guard  — curation.yaml structure and policy invariants.
   2. Spec guard      — generated specs in .scratch/ honor the contract:
                        byte-identical persona core, appended Noesis contract,
-                       advisory risk block, reporting to noesis-core,
+                       advisory risk block, reporting to noesis-orchestrator,
                        secret-shape scan (hard fail), 100% extraction
                        coverage, description uniqueness (TF-IDF cosine —
                        fail > 0.85 vs sibling Tier A profiles AND vs the
@@ -102,8 +102,8 @@ def layer1_curation() -> tuple[dict, list[dict]]:
         fail(layer, f"Tier A cap 18 exceeded: {len(entries)}")
 
     rep = cur.get("reporting", {})
-    if rep.get("reports_to") != "noesis-core":
-        fail(layer, "all Tier A profiles must report to noesis-core")
+    if rep.get("reports_to") != "noesis-orchestrator":
+        fail(layer, "all Tier A profiles must report to noesis-orchestrator")
 
     # collision with noesis fleet profile names
     noesis_names = set()
@@ -184,16 +184,16 @@ def layer2_specs(cur: dict, entries: list[dict]) -> None:
             fail(layer, f"{profile}: persona core is not byte-identical to upstream")
         if CONTRACT_MARKER not in soul_text:
             fail(layer, f"{profile}: Noesis contract block missing from SOUL.md")
-        if "reports_to: noesis-core" not in soul_text:
-            fail(layer, f"{profile}: SOUL.md frontmatter must report to noesis-core")
+        if "reports_to: noesis-orchestrator" not in soul_text:
+            fail(layer, f"{profile}: SOUL.md frontmatter must report to noesis-orchestrator")
 
         # (b) agent.yaml contract
         doc = yaml.safe_load(ayaml.read_text(encoding="utf-8"))
         agent = (doc or {}).get("agent") or {}
         if agent.get("tier") != "advisory":
             fail(layer, f"{profile}: agent.yaml tier must be advisory")
-        if (agent.get("collaboration") or {}).get("reports_to") != "noesis-core":
-            fail(layer, f"{profile}: agent.yaml must report to noesis-core")
+        if (agent.get("collaboration") or {}).get("reports_to") != "noesis-orchestrator":
+            fail(layer, f"{profile}: agent.yaml must report to noesis-orchestrator")
         risk = agent.get("risk") or {}
         if risk.get("privileged_tools") or risk.get("secret_access") \
                 or risk.get("autonomous_execution"):

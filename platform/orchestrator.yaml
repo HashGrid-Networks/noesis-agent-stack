@@ -115,7 +115,7 @@ agents:
       circuit breaker. Holds no terminal or code_execution authority: it
       dispatches to narrowly privileged executor profiles and never performs
       production, financial, wallet, credential, or destructive operations
-      itself. Reports to main-hermes / noesis-core.
+      itself. Reports to main-hermes / noesis-orchestrator.
 
   research-openclaw:
     agent_id: research-openclaw

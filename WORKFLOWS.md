@@ -11,6 +11,45 @@
 | `build-promotion` | Advance an approved intent through plan, code, and artifact handoff | Hermes Main, broker, Coder, MemPalace |
 | `release-validation` | Verify build artifacts against evidence, schema, and policy before release | Hermes Main, broker, QA, MemPalace |
 | `orchestrated-task` | Run a graph of cross-profile work as durable task contracts with dependency, approval, timeout, and retry control | Noesis Orchestrator, assigned roster profiles, reviewers |
+| `subagent-driven-development` | Execute an approved implementation plan through fresh implementer contexts, ordered spec/quality reviews, and final integration review | Noesis Orchestrator, Noesis Forge, Noesis Sentinel, Noesis Skeptic |
+| `plan-first-delegation` | Decompose an agent request into bounded capability-mapped tasks, validate a planning gate (owners + workspace conflicts) before dispatch, then route each task to its eligible specialist | Noesis Orchestrator, route planner, eligible specialists |
+| `delegated-task-handoff` | Durable, versioned orchestrator-to-specialist handoff with assignment epoch/fencing, lease, idempotent delivery, revision-bound reviews, and distinct orchestrator acceptance | Noesis Orchestrator, assigned specialist, reviewers |
+
+## Specialist profile families
+
+Work is routed across **two families** of Hermes profiles, both registered with
+the Noesis Orchestrator. Each carries an explicit role, toolset, and review
+chain; reviewer-only profiles receive no execution authority.
+
+### In-house Noesis fleet (16)
+
+Native specialists defined in `profiles/noesis-roster.yaml` (machine-readable
+source of truth) and `agents/noesis-*/` (`SOUL.md` + `agent.yaml`):
+
+- **Supervisor / control plane:** `noesis-orchestrator` (maps to the `default`
+  profile; plans, dispatches, supervises, synthesizes; never executes).
+- **Primary operators:** `noesis-steward` (triage/prioritization),
+  `noesis-cartographer` (decomposition/risk/ADRs), `noesis-forge` (software),
+  `noesis-substrate` (infra), `noesis-scribe` (knowledge archiving).
+- **Reviewer-only (no execution):** `noesis-sentinel` (code/security review),
+  `noesis-skeptic` (adversarial / red-team QC).
+- **Specialists (on-demand):** `noesis-signal` (research/synthesis),
+  `noesis-tracer` (OSINT/evidence), `noesis-ledger` (crypto/mining/DePIN),
+  `noesis-grid` (data), `noesis-quill` (writing), `noesis-advocate` (legal
+  advocacy support), `noesis-herald` (comms), `noesis-architect` (agent design).
+
+### Third-party "agency" fleet (18, advisory-only)
+
+Generated from the [Agency Agent Catalog](https://github.com/msitarzewski/agency-agents)
+(MIT, pinned in `agency/SOURCE`), curated one per division in
+`agency/curation.yaml`. All carry the shared advisory posture: `reports_to:
+noesis-orchestrator`, no privileged tools, no secret access, no autonomous
+execution; production / credential / financial / external-communication actions
+require human approval. See `agency/README.md`.
+
+These families are the assignee and reviewer pool for the workflows below. The
+orchestrator refuses any assignee absent from the declared rosters; reviewer-only
+profiles are never assigned executing work.
 
 ---
 

@@ -29,8 +29,14 @@ agent:
     - No production deploy or unreviewed merge, ever
     - Never commits secrets/keys
     - No destructive commands without explicit approval and rollback plan
+    - Coding sessions (Claude Code / Codex) supervised per CODING-SESSION-SUPERVISION.md
+  supervision:
+    doc: agents/noesis-forge/CODING-SESSION-SUPERVISION.md
+    scope: claude-code-and-codex-session-supervision
+    enforced_by: orchestration/orchestrator/app/subagent_development.py
+    backends: [claude-code, codex]
   collaboration:
-    reports_to: noesis-core
+    reports_to: noesis-orchestrator
     delegates_to: []
     reviewed_by: [noesis-sentinel, noesis-skeptic]
   deployment:

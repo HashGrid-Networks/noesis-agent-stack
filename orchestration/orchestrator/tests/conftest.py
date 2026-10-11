@@ -1,7 +1,24 @@
 import pytest
 
+from app.launcher import reset_credential_attempt_budget
 from app.control_plane import Orchestrator
 from app.models import Verification
+
+
+@pytest.fixture(autouse=True)
+def _credential_budget_isolation():
+    """Reset the per-attempt credential budget before every test.
+
+    F5's credential-attempt budget persists across launcher calls inside one
+    test (so a second launch of the same attempt is refused), but resets
+    between tests. Without this reset, a successful launch in one test would
+    close the budget for the shared (provider, model, task_id) key and cause
+    later tests that reuse the same key to fail with credential_attempt_
+    exhausted instead of the intended failure mode.
+    """
+    reset_credential_attempt_budget()
+    yield
+    reset_credential_attempt_budget()
 
 
 @pytest.fixture

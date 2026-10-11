@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/enuno/noesis-agent-stack/contracts/orchestration/subagent-development-plan.schema.json",
+  "title": "SubagentDevelopmentPlan",
+  "type": "object",
+  "required": ["plan_id", "plan_revision", "approval_ref", "baseline_revision", "tasks"],
+  "properties": {
+    "plan_id": {"type": "string"},
+    "plan_revision": {"type": "string", "description": "SHA-256 hash of approved plan text"},
+    "approval_ref": {"type": "string"},
+    "baseline_revision": {"type": "string"},
+    "tasks": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/task"},
+      "minItems": 1
+    }
+  },
+  "$defs": {
+    "task": {
+      "type": "object",
+      "required": ["task_id", "text", "acceptance_criteria", "dependencies", "expected_paths", "verification_commands"],
+      "properties": {
+        "task_id": {"type": "string"},
+        "text": {"type": "string"},
+        "acceptance_criteria": {"type": "array", "items": {"type": "string"}},
+        "non_goals": {"type": "array", "items": {"type": "string"}},
+        "dependencies": {"type": "array", "items": {"type": "string"}},
+        "expected_paths": {"type": "array", "items": {"type": "string"}},
+        "verification_commands": {"type": "array", "items": {"type": "string"}},
+        "max_retries": {"type": "integer", "minimum": 0, "default": 2}
+      }
+    }
+  }
+}

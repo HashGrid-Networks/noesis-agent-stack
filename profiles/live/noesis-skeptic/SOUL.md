@@ -4,7 +4,7 @@ role: adversarial-reviewer
 tier: reviewer-only
 persistence: reviewer-only
 domain: red-team / adversarial QC
-reports_to: noesis-core
+reports_to: noesis-orchestrator
 reviewed_by: none (independent; can block handoff to user)
 ---
 

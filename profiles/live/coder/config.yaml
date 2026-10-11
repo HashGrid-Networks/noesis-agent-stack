@@ -2,12 +2,12 @@ model:
   default: zai-org-glm-4.7
   provider: custom
   base_url: https://api.venice.ai/api/v1
-  api_key_env: VENICE_INFERENCE_KEY_qugxhtmyc67kmNrwcgqlbOuU1XeMPwO8Cran6NhSXp
+  api_key_env: VENICE_API_KEY
   fallback_providers: []
   credential_pool_strategies: {}
   toolsets:
     - hermes-cli
-  api_key: VENICE_INFERENCE_KEY_qugxhtmyc67kmNrwcgqlbOuU1XeMPwO8Cran6NhSXp
+  api_key: ${VENICE_API_KEY}
 fallback_providers: []
 credential_pool_strategies: {}
 toolsets:
@@ -313,5 +313,5 @@ web:
 custom_providers:
   - name: Api.venice.ai
     base_url: https://api.venice.ai/api/v1
-    api_key: VENICE_INFERENCE_KEY_qugxhtmyc67kmNrwcgqlbOuU1XeMPwO8Cran6NhSXp
+    api_key: ${VENICE_API_KEY}
     model: zai-org-glm-4.7

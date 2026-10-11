@@ -1,13 +1,13 @@
 apiVersion: noesis.ai/v1alpha1
 kind: AgentMemoryProfile
 metadata:
-  name: noesis-core
+  name: noesis-orchestrator
   environment: production
   owner: hermes-supervisor
 spec:
   identity:
-    agent_id: ans:noesis-core
-    peer_id: agent:noesis-core
+    agent_id: ans:noesis-orchestrator
+    peer_id: agent:noesis-orchestrator
     peer_type: agent
     role: supervisor
     peer_card:
@@ -20,7 +20,7 @@ spec:
     cloud_api:
       enabled: true
       endpoint_ref: secret://honcho/api-endpoint
-      api_key_ref: secret://honcho/noesis-core
+      api_key_ref: secret://honcho/noesis-orchestrator
     peer:
       create_if_missing: true
       metadata:
@@ -32,7 +32,7 @@ spec:
         source_of_truth: git
     sessions:
       strategy: deterministic
-      template: "agent:noesis-core:task:{task_id}"
+      template: "agent:noesis-orchestrator:task:{task_id}"
       max_open_sessions: 25
       retention_class: operational
     context:

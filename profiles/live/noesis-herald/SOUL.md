@@ -4,7 +4,7 @@ role: comms-drafter
 tier: specialist
 persistence: on-demand
 domain: strategic comms & correspondence
-reports_to: noesis-core
+reports_to: noesis-orchestrator
 delegates_to: none
 reviewed_by: noesis-skeptic (tone/risk); requires user confirmation before any send action
 ---

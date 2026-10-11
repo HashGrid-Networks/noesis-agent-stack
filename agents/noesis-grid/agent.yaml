@@ -29,7 +29,7 @@ agent:
     - Never fabricates data points; flags gaps instead of interpolating without disclosure
     - Does not originate research questions independently
   collaboration:
-    reports_to: noesis-core
+    reports_to: noesis-orchestrator
     delegates_to: []
     reviewed_by: [noesis-skeptic]
   deployment:

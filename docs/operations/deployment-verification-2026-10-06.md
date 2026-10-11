@@ -287,3 +287,177 @@ to its lease and completes normally.
   reads; `hermes config` writes; agency checkout restore.
 - **Inference-tested evidence:** NONE — remains blocked on budget approval.
   No ROUTING-SMOKE rows recorded; no live bridge/worker execution.
+
+---
+
+# Reconciliation Pass — 2026-10-07 ~01:20 MDT (read-only)
+
+Directive: proceed toward narrowly scoped inference-verified deployment;
+read-only reconciliation + approval packages only this pass.
+
+## Verified current state
+- Git: main @ 291eb3e == origin/main; tree clean; nothing pending.
+- On-disk config changes present: ~/.hermes/config.yaml default =
+  kimi-coding/kimi-k2.7-code (hermes' own versioned backups
+  config.yaml.good.20261006-181416/181417 corroborate change time 18:14 MDT);
+  noesis-scribe config = kimi-coding/kimi-k2.7-code. Full diff of config.yaml
+  vs .bak = exactly the two model lines (z-ai/glm-5.2@nous → kimi-k2.7-code@kimi-coding).
+- Processes: default gateway (PID 2061, `gateway restart`, started 13:48 MDT) +
+  serve process (PID 79891, 13:40 MDT) — BOTH predate the 18:14 config change
+  → loaded pre-change in-memory config (old nous default route). Coder gateway
+  (PID 49528, 09:04 MDT) runs its own gateway on unchanged anthropic config.
+  No broker/orchestrator processes (earlier "temporary services stopped" =
+  uvicorn test instances only). Desktop app, photon sidecar, omh-menubar =
+  platform infra.
+- `hermes gateway status`: gateway is STANDALONE serving only `default`; all
+  7 wave-1 noesis profile bots are NOT served (coder's own gateway blocks
+  multiplex). Router plugin (agency-agents-router) NOT built/installed.
+
+## New discrepancies vs previous report (not previously recorded)
+1. Wave-1 fleet is applied-on-disk but not actually served by a gateway;
+   ROUTING-SMOKE cannot run as documented (router plugin absent, bots unserved).
+2. Photon credential conflicts: default shares PHOTON_PROJECT_ID/SECRET with
+   all 7 noesis profiles; multiplexing would park adapters until per-profile
+   tokens or profile_routes are configured.
+3. Drift count correction: FIVE drifted profiles (report said "4", named 5):
+   coder, live, cartographer, sentinel, signal.
+4. Scribe config edit has NO .bak (gap; rollback = manual revert to
+   deepseek/deepseek-v4-flash@nous).
+5. Gateway ambiguity resolved: gateway never restarted; "temporary services"
+   referred only to the stopped uvicorn test instances.
+
+## Roster lane policy (profiles/noesis-roster.yaml apply_model)
+- kimi lane: core, steward, forge, scribe (+wave2/3 substrate, grid)
+- anthropic lane: orchestrator, cartographer, sentinel, signal (+tracer, ledger,
+  quill, advocate, herald, architect, skeptic)
+- coder/live are non-roster profiles: coder=anthropic (pool 4, credentialed),
+  live=nous (pool 0, dead).
+
+## Approval packages prepared in chat (2026-10-07): gateway restart w/ recovery
+path; bounded inference plan (retry=per-test); lane decisions (5 profiles);
+router plugin build+enable; launchd broker service (draft only). No inference,
+restart, activation, install, commit, or push performed this pass.
+
+---
+
+# Corrections + Offline Verification — 2026-10-06 19:40 MDT (19:40 local / 2026-10-07 01:40 UTC)
+
+The previous addendum's header "~01:20 MDT" was WRONG: 01:20 was UTC
+(= 19:20 MDT Oct 6). Local time is MDT (UTC-6); the conversation date is
+Oct 6 MDT. Original entry preserved above; this is the correction.
+
+## Correction: repository state
+After the addendum was written, HEAD = 291eb3e and the working tree holds
+exactly ONE modified tracked file: this report
+(` M docs/operations/deployment-verification-2026-10-06.md`, uncommitted).
+The earlier "tree clean" statement described the state BEFORE the addendum.
+Nothing else in the deployment repo changed. (agency/.scratch/ is gitignored
+generated output; ~/tools/agency-agents gained the builder's default in-tree
+integrations/ output — tooling checkout, not the deployment repo.)
+
+## Correction: "router plugin absent from repo" — REVERSED
+The plugin EXISTS at agency/integrations/hermes-plugin/ (vendored). My earlier
+claim searched the wrong path. Verified offline 2026-10-07 01:2x-01:4x UTC:
+- Build from pinned source (ad9264e3): OK (279 agents)
+- convert.py --check: OK (pin parity, plugin byte-parity vs pinned-source
+  build, scratch staleness, secret scan) — after materializing the on-demand
+  .scratch tree per README operating rules
+- check-hermes-plugin.py: PASSED; test-hermes-plugin.py: 6/6 OK
+- validate-specs.py: OK (4 warnings: L2 needs .scratch — now built; L3 apply
+  --check parity gate is unimplemented/planned)
+
+## Finding: prefer-live overlay has no executable runtime consumer
+agency/integrations/hermes-plugin/prefer-live.yaml (strategy
+suppress_router_candidate_when_live_profile_matches) is generated and
+statically validated, but no code applies it: not in the plugin __init__,
+not in apply-agency-profiles.sh, not in generated specs. Offline 18-division
+selection via the vendored plugin's real scoring: 2/18 agreement with
+curation.yaml (raw token-overlap picks non-curated agents, e.g. engineering
+query -> realtime-collaboration-engineer vs curated engineering-software-
+architect). As designed today, ROUTING-SMOKE would measure raw routing, not
+prefer-live routing. Enforcement mechanism = implementation gap (recorded;
+does not block the default-route milestone). Wave-2 divisions (10/18) have
+no live profiles (no agency-* profiles under ~/.hermes/profiles).
+
+## Correction: loaded-route + restart-scope claims
+- Start times are inference, not proof of loaded route. No supported
+  non-inference loaded-route inspection exists (gateway status does not
+  report the model; serve API /health = 404, undocumented endpoints not
+  probed). Loaded-route verification remains PENDING.
+- `hermes gateway restart` (no --all) restarts the default-profile gateway
+  service = PID 2061. It does NOT target the desktop serve process PID 79891
+  (lock: host-desktop-serve.lock — this session's runtime) nor coder PID
+  49528. Earlier statement that restart would terminate this session was
+  wrong; residual uncertainty: desktop features that call the gateway
+  messaging bus would pause until it returns.
+
+---
+
+# Executed Approvals A + B — 2026-10-06 19:40–19:57 MDT
+
+## Approval A — default gateway restart (PID 2061 scope): EXECUTED
+- `hermes gateway restart` (foreground, 120s timeout): old gateway PID 2061
+  STOPPED; replacement did not attach before the CLI was reclaimed — gateway
+  left not-running (lock free). Recovery per plan: relaunched via
+  `hermes gateway run` as tracked background process (session proc_5cd0eafe5941).
+- Result: gateway RUNNING as PID 89337, started 2026-10-06 19:53:56 MDT —
+  AFTER config mtime 18:14:17 MDT → process read on-disk config at boot
+  (kimi route). Status: standalone serving default (multiplex deferred, as
+  approved scope). Session serve PID 79891 UNINTERRUPTED; coder PID 49528
+  UNTOUCHED. Loaded route = strong inference from boot-after-change; direct
+  in-memory route inspection remains unavailable (documented).
+
+## Approval B — one direct KIMI_CODE probe: EXECUTED
+- Command: `hermes chat -q "Reply with exactly: noesis-probe-ok" -m kimi-k2.7-code`
+- Session: 20261006_195434_bbb544; duration 21s; api_call_count: 1; exit 0.
+- Recorded telemetry: model kimi-k2.7-code; billing_provider kimi-coding;
+  assistant reply exactly "noesis-probe-ok"; input_tokens 21,781
+  (full profile prompt context — the pre-declared ~500-token input estimate
+  was wrong for `hermes chat`; corrected here); output_tokens 79;
+  actual_cost_usd: None (no provider cost telemetry, as disclosed).
+- Establishes: kimi-coding credential functions; approved lane executes
+  end-to-end from on-disk config. Consumed subscription quota: 1 call,
+  ~21.8K in / 79 out tokens.
+- Export artifact (contained all sessions) deleted after evidence extraction;
+  canonical record remains in Hermes session store.
+
+---
+
+# Full Profile Fleet Apply — 2026-10-06 ~20:05 MDT (2026-10-07 02:05 UTC)
+
+Operator directive: "apply all noesis profiles and all other agent profiles
+contained in the noesis-agent-stack" — explicit authorization for full-fleet
+materialization. Model tuning left OFF (zero inference): the scripts verify
+lanes with live smoke calls; anthropic-lane verification remains a separate
+approval. New profiles inherit the host default route (kimi-k2.7-code@
+kimi-coding); roster-mandated anthropic lanes are NOT written — recorded as
+pending lane decision, per the standing fence.
+
+## Actions
+- Pre-apply backup: ~/.hermes/backups/pre-full-apply-20261006/profiles.tgz
+  (full profiles dir; sockets skipped).
+- scripts/apply-noesis-profiles.sh --all --no-model-tuning (bash 5.3 required;
+  macOS /bin/bash 3.2 lacks mapfile): created=10 refreshed=7 skipped=0.
+  New: noesis-substrate, tracer, ledger, grid, quill (wave 2);
+  noesis-orchestrator, advocate, herald, architect, skeptic (wave 3).
+  NOTE: script exits 1 on success (trailing `[[ ]] && exit 1` returns false
+  when the failed array is empty) — cosmetic bug, results verified on disk.
+- scripts/apply-agency-profiles.sh --all --yes --no-model-tuning:
+  created=18 failed=0 (same cosmetic exit-1).
+  All 18 Tier A agency profiles materialized from the validated .scratch tree.
+
+## Verification (post-apply)
+- ~/.hermes/profiles: 36 profile dirs (17 noesis-*, 18 agency-*, coder, live)
+- validate-honcho-profiles.py: ok; check-agency-names.py: OK;
+  validate_inference_routing.py: PASSED; verify_live_config.py: PASS
+  (drift list unchanged: the 5 previously identified profiles only; new
+  profiles inherit the approved default route).
+- Gateway: observed PID changed 89337 -> 25816 without operator action
+  (external supervisor restart, post-apply); loaded config post-dates all
+  changes. Still STANDALONE serving default only; all 35 other profiles'
+  bots unserved (multiplex + photon token strategy remain open decisions).
+
+## Not done (unchanged fences)
+- No inference beyond the previously approved single probe; no anthropic or
+  openrouter execution; no roster-lane writes to the 12 roster-anthropic
+  profiles; no multiplex/photon activation; no launchd install; no commits.

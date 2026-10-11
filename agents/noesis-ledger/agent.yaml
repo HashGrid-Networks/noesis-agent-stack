@@ -31,7 +31,7 @@ agent:
     - Verifies addresses/networks/contracts before citing
     - No autonomous transaction execution
   collaboration:
-    reports_to: noesis-core
+    reports_to: noesis-orchestrator
     delegates_to: [noesis-grid]
     reviewed_by: [noesis-skeptic]
   deployment:

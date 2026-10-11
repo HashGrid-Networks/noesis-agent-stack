@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/enuno/noesis-agent-stack/contracts/orchestration/subagent-development-review.schema.json",
+  "title": "SubagentDevelopmentReview",
+  "type": "object",
+  "required": ["review_id", "review_type", "verdict", "reviewer_profile", "candidate_revision", "findings"],
+  "properties": {
+    "review_id": {"type": "string"},
+    "review_type": {"type": "string", "enum": ["spec", "quality", "integration"]},
+    "verdict": {"type": "string", "enum": ["PASS", "APPROVED", "REQUEST_CHANGES", "BLOCKED"]},
+    "reviewer_profile": {"type": "string"},
+    "candidate_revision": {"type": "string"},
+    "verification": {"type": "object"},
+    "findings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/finding"}
+    }
+  },
+  "$defs": {
+    "finding": {
+      "type": "object",
+      "required": ["severity", "location", "rationale", "required_remediation"],
+      "properties": {
+        "severity": {"type": "string", "enum": ["critical", "important", "minor", "note"]},
+        "location": {"type": "string"},
+        "rationale": {"type": "string"},
+        "required_remediation": {"type": "string"}
+      }
+    }
+  }
+}

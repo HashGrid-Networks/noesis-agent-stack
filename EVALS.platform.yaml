@@ -372,7 +372,7 @@ platform_evals:
       category: orchestrated_task_control
       description: "Reviewer-only and supervisor profiles are never assigned executing work"
       steps:
-        - "Propose tasks assigned to noesis-sentinel, noesis-skeptic, noesis-core, and noesis-orchestrator"
+        - "Propose tasks assigned to noesis-sentinel, noesis-skeptic, and noesis-orchestrator"
       success_criteria:
         - "Each proposal is rejected (reviewer_only_profile_cannot_execute / supervisor_cannot_execute)"
         - "noesis-orchestrator declares neither terminal nor code_execution toolsets"

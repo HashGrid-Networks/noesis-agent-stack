@@ -30,7 +30,7 @@ agent:
     - Sandboxed execution by default; scoped credentials
     - Mandatory rollback/checkpoint plan for any change
   collaboration:
-    reports_to: noesis-core
+    reports_to: noesis-orchestrator
     delegates_to: []
     reviewed_by: [noesis-sentinel, noesis-skeptic]
   deployment:

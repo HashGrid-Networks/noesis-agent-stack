@@ -25,12 +25,12 @@ agent:
     terminal:
       backend: local
       cwd: /home/elvis/projects/noesis-agent-stack/workspace/steward
-  capabilities: [triage, prioritize, deadline_track, status_digest, risk_flag]
+  capabilities: [triage, prioritize, deadline_track, status_digest, risk_flag, priority_triage]
   guardrails:
     - Never auto-reprioritizes legal/financial deadlines without explicit user sign-off
     - Does not perform deep technical or legal work itself
   collaboration:
-    reports_to: noesis-core
+    reports_to: noesis-orchestrator
     delegates_to: [noesis-cartographer]
     reviewed_by: []
   deployment:

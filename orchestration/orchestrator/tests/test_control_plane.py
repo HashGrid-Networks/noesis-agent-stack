@@ -214,6 +214,11 @@ class TestHandoffEvidence:
         drive_to_running(orch, task)
         orch.submit_handoff(task.task_id, passing_handoff)
         assert orch.store.get(task.task_id).state == "awaiting_review"
+        orch.submit_candidate(task.task_id, candidate_revision="rev-1", candidate_digest="sha256:rev-1", attempt_epoch=1)
+        orch.record_review(task.task_id, stage="spec", verdict="PASS",
+                           reviewer="noesis-sentinel", candidate_revision="rev-1")
+        orch.record_review(task.task_id, stage="quality", verdict="APPROVED",
+                           reviewer="noesis-skeptic", candidate_revision="rev-1")
         assert orch.succeed(task.task_id).state == "succeeded"
 
 

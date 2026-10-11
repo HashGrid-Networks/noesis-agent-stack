@@ -23,15 +23,19 @@ updated: 2026-08-28
 profiles:
 
   # ── Wave 1 — Foundation + Implementation (applied) ─────────────────────
-  noesis-core:
-    name: "Noesis Hermes-Core"
-    role: supervisor
+  # CONSOLIDATED 2026-10-10: former noesis-core (Hermes-Core, applied, maps to
+  # the Hermes `default` profile) merged into this single noesis-orchestrator
+  # entry. Applied/live mapping takes precedence; staged wave-3 deltas preserved
+  # in the comments below where they conflicted.
+  noesis-orchestrator:
+    name: "Noesis Hermes-Core"   # staged delta: "Noesis Orchestrator" (dropped on conflict)
+    role: supervisor             # staged delta: control-plane-orchestrator (dropped on conflict)
     tier: supervisor
     persistence: persistent
     domain: "Supervisor/routing; approval-gate enforcement; memory index"
     maps_to: default            # the existing supervisor profile at ~/.hermes
     description: >-
-      Noesis supervisor and router (Hermes-Core). Intake tasks, classify domain and risk tier, assign the narrowest-mandate specialist, enforce approval gates; never executes domain work.
+      Noesis supervisor and router (Hermes-Core). Intake tasks, classify domain and risk tier, assign the narrowest-mandate specialist, enforce approval gates; never executes domain work. Consolidated definition also carries the staged control-plane orchestration scope (durable task contracts, dispatch, synthesis) — see agents/noesis-orchestrator/agent.yaml control_plane block.
     model_routing:
       default: kimi-k2.7-code @ kimi-coding   # T12a: nous key dead 2026-09-16
       escalation: openrouter (multi-model cross-check)
@@ -40,35 +44,18 @@ profiles:
     apply_model:
       model: kimi-k2.7-code
       provider: kimi-coding   # T12a: migrated off dead nous key 2026-09-16
+      # T13 staged alternative (dropped on conflict, preserved for reference):
+      #   model: claude-sonnet-5
+      #   provider: anthropic   # subscription OAuth route (openrouter billing exhausted 2026-09-18)
     toolsets: [memory, session_search, file, web, clarify, todo, delegation, cronjob, skills]
+    # Staged least-privilege delta (dropped on conflict, preserved for reference):
+    #   toolsets: [memory, file, todo, clarify, delegation, session_search, skills]
+    #   ("Deliberately excludes terminal and code_execution: least-privilege supervisor")
     terminal_cwd: .               # T12 sync: applied fleet uses "." for the
                                   # default profile (old ROSTER ground truth);
                                   # do not set to workspace/core.
     wave: 1
     status: applied
-
-  noesis-orchestrator:
-    name: "Noesis Orchestrator"
-    role: control-plane-orchestrator
-    tier: supervisor
-    persistence: persistent
-    domain: "Durable task contracts; dispatch, dependency gating, approval gates, synthesis"
-    description: >-
-      Noesis control-plane orchestrator. Plans, dispatches, supervises, and synthesizes cross-profile work through durable task contracts; holds no terminal or execution authority and never performs irreversible operations itself.
-    model_routing:
-      default: reasoning model (deterministic dispatch judgment)
-      fast: kimi for state inspection and status digests
-      escalation: second model on ambiguous risk classification
-    apply_model:
-      model: claude-sonnet-5
-      provider: anthropic   # T13: subscription OAuth route (openrouter billing exhausted 2026-09-18)
-    # Deliberately excludes terminal and code_execution: the orchestrator is a
-    # least-privilege supervisor, not an executor. Irreversible work is routed
-    # to a narrowly privileged executor behind a human approval gate.
-    toolsets: [memory, file, todo, clarify, delegation, session_search, skills]
-    terminal_cwd: /home/elvis/projects/noesis-agent-stack/workspace/orchestrator
-    wave: 3
-    status: staged
 
   noesis-steward:
     name: "Noesis Steward"

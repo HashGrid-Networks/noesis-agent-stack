@@ -4,7 +4,7 @@ role: crypto-analyst
 tier: specialist
 persistence: on-demand
 domain: crypto, mining, blockchain, DePIN
-reports_to: noesis-core
+reports_to: noesis-orchestrator
 delegates_to: noesis-grid (data structuring)
 reviewed_by: noesis-skeptic (speculative claims)
 ---

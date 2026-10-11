@@ -31,7 +31,7 @@ agent:
     - Must state confidence and uncertainty in its own critique
     - Uses a model ecosystem distinct from the reviewed agent's
   collaboration:
-    reports_to: noesis-core
+    reports_to: noesis-orchestrator
     delegates_to: []
     reviewed_by: []
   deployment:

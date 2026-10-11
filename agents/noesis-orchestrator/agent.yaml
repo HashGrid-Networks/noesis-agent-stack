@@ -1,43 +1,66 @@
 # agents/noesis-orchestrator/agent.yaml
-# Machine-parseable contract for the noesis-orchestrator (control-plane) agent.
+# Machine-parseable contract for the noesis-orchestrator supervisor agent.
+# CONSOLIDATED 2026-10-10: former noesis-core (Hermes-Core, applied, wave 1)
+# merged into this file; the separate staged wave-3 control-plane definition
+# was folded in with the applied/live contract taking precedence. Non-conflicting
+# staged content (control_plane block, capabilities, delegates_to, guardrails)
+# is preserved verbatim; conflicting staged deltas are recorded in comments.
 # Reference: profiles/noesis-roster.yaml, orchestration/orchestrator/,
 # contracts/orchestration/task-contract.schema.json.
 version: "1.0.0"
 agent:
   agent_id: noesis-orchestrator
-  name: "Noesis Orchestrator"
-  role: control-plane-orchestrator
+  name: "Noesis Hermes-Core"   # staged delta (dropped on conflict): "Noesis Orchestrator"
+  role: supervisor             # staged delta (dropped on conflict): control-plane-orchestrator
   tier: supervisor
   persistence: persistent
   runtime: hermes
   enabled: true
   hermes_profile:
-    profile_name: noesis-orchestrator
+    profile_name: default          # applied/live mapping (was: noesis-orchestrator + clone_from: default)
     description: >-
-      Control-plane orchestrator. Plans, dispatches, supervises, and synthesizes
-      cross-profile work through durable task contracts; holds no execution
-      authority and never performs irreversible operations itself.
-    clone_from: default
-    clone_skills: false
+      Noesis supervisor and router. Intake tasks, classify domain and risk tier,
+      assign the narrowest-mandate specialist, enforce approval gates; never
+      executes domain work. Also carries the consolidated control-plane
+      function: plans, dispatches, supervises, and synthesizes cross-profile
+      work through durable task contracts (see control_plane below).
     model:
-      default: anthropic/claude-sonnet-5
-      provider: openrouter
-    # No terminal, no code_execution: least-privilege by construction.
-    toolsets: [memory, file, todo, clarify, delegation, session_search, skills]
+      default: kimi-k2.7-code
+      provider: kimi-coding        # T12a: migrated off dead nous key 2026-09-16
+      # Staged alternative (dropped on conflict, preserved for reference):
+      #   default: anthropic/claude-sonnet-5
+      #   provider: openrouter     # T13: subscription OAuth route
+    # Applied toolset (superset). Staged least-privilege delta (dropped on
+    # conflict, preserved for reference):
+    #   toolsets: [memory, file, todo, clarify, delegation, session_search, skills]
+    #   ("No terminal, no code_execution: least-privilege by construction.")
+    toolsets: [memory, session_search, file, web, clarify, todo, delegation, cronjob, skills]
     terminal:
       backend: local
-      cwd: /home/elvis/projects/noesis-agent-stack/workspace/orchestrator
+      cwd: .                         # T12 sync: applied fleet uses "." for the default profile;
+                                     # do not set to workspace/core (staged delta had workspace/orchestrator)
   capabilities:
+    # Applied (Hermes-Core):
+    - route
+    - classify_risk
+    - delegate
+    - escalate
+    - enforce_approval_gate
+    - memory_index
+    # Staged (control-plane), preserved — no conflict:
     - plan_task_graph
     - dispatch_task
     - dependency_gate
-    - enforce_approval_gate
     - supervise_timeout
     - bounded_retry
     - circuit_break
-    - escalate
     - synthesize_results
   guardrails:
+    # Applied (Hermes-Core):
+    - No direct external actions
+    - Consequential handoffs require logged rationale
+    - Never bypass approval gates (financial, legal, infra-destructive, external comms)
+    # Staged (control-plane), preserved — no conflict:
     - Never executes domain work; assigns it to a named roster profile
     - Never holds terminal, code_execution, or credential access
     - Never performs production, financial, wallet, credential, deletion, or
@@ -49,6 +72,7 @@ agent:
     - Never allows stale (lease-expired) work to succeed silently
     - Reviewer-only and supervisor profiles are never assigned executing work
   control_plane:
+    # Staged block, preserved verbatim — no conflict with applied contract.
     implementation: orchestration/orchestrator/
     task_contract_schema: contracts/orchestration/task-contract.schema.json
     ledger: workspace/orchestrator/tasks.jsonl
@@ -65,8 +89,9 @@ agent:
       - succeeded
       - cancelled
   collaboration:
-    reports_to: noesis-core
+    reports_to: user                # applied (staged had: noesis-orchestrator, self-referential post-rename)
     delegates_to:
+      # Staged roster, preserved verbatim — no conflict:
       - noesis-signal
       - noesis-tracer
       - noesis-grid
@@ -80,7 +105,7 @@ agent:
       - noesis-architect
       - noesis-scribe
       - noesis-steward
-    reviewed_by: [noesis-skeptic, noesis-sentinel]
+    reviewed_by: [noesis-skeptic, noesis-sentinel]   # applied: skeptic; staged added sentinel (union preserved)
   deployment:
-    wave: 3
-    status: staged
+    wave: 1                         # applied (staged wave 3 dropped on conflict)
+    status: applied                 # applied (staged status dropped on conflict)

@@ -33,7 +33,7 @@ risk_defaults: &risk_defaults
     - external_communications
 
 reporting:
-  reports_to: noesis-core
+  reports_to: noesis-orchestrator
   delegates_to: []
   reviewed_by: [noesis-skeptic]
 

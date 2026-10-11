@@ -20,7 +20,7 @@ REQUIRED = {
 }
 
 expected = {
-    'noesis-core', 'noesis-steward', 'noesis-cartographer', 'noesis-forge',
+    'noesis-orchestrator', 'noesis-steward', 'noesis-cartographer', 'noesis-forge',
     'noesis-sentinel', 'noesis-scribe', 'noesis-signal', 'noesis-substrate',
     'noesis-tracer', 'noesis-ledger', 'noesis-grid', 'noesis-quill',
     'noesis-advocate', 'noesis-herald', 'noesis-architect', 'noesis-skeptic',

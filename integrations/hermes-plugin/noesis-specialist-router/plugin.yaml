@@ -1,0 +1,5 @@
+name: noesis-specialist-router
+version: 0.1.0
+description: Explicit specialist-routing launcher for Noesis orchestrator tasks.
+provides_tools:
+  - noesis_specialist_delegate

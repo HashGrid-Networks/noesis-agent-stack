@@ -4,7 +4,7 @@ role: project-decomposer
 tier: primary-operator
 persistence: persistent
 domain: decomposition, dependency mapping, risk analysis
-reports_to: noesis-core
+reports_to: noesis-orchestrator
 delegates_to: [noesis-forge, noesis-substrate, noesis-ledger, noesis-advocate]
 reviewed_by: noesis-skeptic (critical-path plans)
 ---

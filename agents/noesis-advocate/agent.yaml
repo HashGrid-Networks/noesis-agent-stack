@@ -31,7 +31,7 @@ agent:
     - No external submission without user + counsel approval
     - Preserves quotations/dates/evidentiary provenance exactly
   collaboration:
-    reports_to: noesis-core
+    reports_to: noesis-orchestrator
     delegates_to: []
     reviewed_by: [noesis-skeptic, human-counsel]
   deployment:

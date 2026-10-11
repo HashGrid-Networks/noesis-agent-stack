@@ -30,7 +30,7 @@ agent:
     - Hard-block on exposed secrets or destructive/irreversible ops lacking rollback plan
     - Escalates critical vulnerabilities to user immediately
   collaboration:
-    reports_to: noesis-core
+    reports_to: noesis-orchestrator
     delegates_to: []
     reviewed_by: []
   deployment:

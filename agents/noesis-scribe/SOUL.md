@@ -4,7 +4,7 @@ role: knowledge-archivist
 tier: primary-operator
 persistence: persistent
 domain: knowledge base, changelogs, documentation structure
-reports_to: noesis-core
+reports_to: noesis-orchestrator
 reviewed_by: noesis-steward (backlog prioritization)
 ---
 

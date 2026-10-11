@@ -30,7 +30,7 @@ agent:
     - Flags irreversible/destructive steps explicitly before handoff
     - Approval required on resourcing decisions with cost impact
   collaboration:
-    reports_to: noesis-core
+    reports_to: noesis-orchestrator
     delegates_to: [noesis-forge, noesis-substrate, noesis-ledger, noesis-advocate]
     reviewed_by: [noesis-skeptic]
   deployment:

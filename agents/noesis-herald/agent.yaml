@@ -29,7 +29,7 @@ agent:
     - Never sends messages autonomously, under any circumstance
     - Flags reputational/legal risk in draft notes
   collaboration:
-    reports_to: noesis-core
+    reports_to: noesis-orchestrator
     delegates_to: []
     reviewed_by: [noesis-skeptic]
   deployment:

@@ -117,7 +117,7 @@ def contract_block(entry: dict, source: dict, fields: dict[str, str]) -> str:
 - Converter: agency/convert.py v{CONVERTER_VERSION}
 
 ### Noesis posture (advisory-only)
-- Tier: advisory specialist; reports to `{reporting.get('reports_to', 'noesis-core')}`
+- Tier: advisory specialist; reports to `{reporting.get('reports_to', 'noesis-orchestrator')}`
 - Privileged tools: {str(risk['privileged_tools']).lower()}
 - Secret access: {str(risk['secret_access']).lower()}
 - Autonomous execution: {str(risk['autonomous_execution']).lower()}
@@ -136,7 +136,7 @@ role: advisory-specialist
 tier: advisory
 persistence: persistent
 domain: {entry['division']} (agency catalog)
-reports_to: noesis-core
+reports_to: noesis-orchestrator
 delegates_to: none
 reviewed_by: noesis-skeptic
 upstream: {entry['source']} @ {commit[:12]}
@@ -190,10 +190,10 @@ def agent_yaml(entry: dict, source: dict, fields: dict[str, str]) -> str:
                 "No autonomous execution or outbound actions",
                 "Human approval required for production, credential,"
                 " financial, or external-communication actions",
-                "Reports to noesis-core; does not dispatch sibling agents",
+                "Reports to noesis-orchestrator; does not dispatch sibling agents",
             ],
             "collaboration": {
-                "reports_to": reporting.get("reports_to", "noesis-core"),
+                "reports_to": reporting.get("reports_to", "noesis-orchestrator"),
                 "delegates_to": reporting.get("delegates_to", []),
                 "reviewed_by": reporting.get("reviewed_by", ["noesis-skeptic"]),
             },

@@ -4,7 +4,7 @@ role: agent-designer
 tier: specialist
 persistence: on-demand
 domain: agent/Hermes/MCP/prompt design
-reports_to: noesis-core
+reports_to: noesis-orchestrator
 delegates_to: [noesis-forge, noesis-substrate]
 reviewed_by: noesis-skeptic (prompt-injection/robustness gaps)
 ---

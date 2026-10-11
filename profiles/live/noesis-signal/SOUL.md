@@ -4,7 +4,7 @@ role: research-specialist
 tier: specialist
 persistence: on-demand
 domain: deep research, multi-source synthesis
-reports_to: noesis-core
+reports_to: noesis-orchestrator
 delegates_to: none (feeds cartographer, advocate, ledger)
 reviewed_by: noesis-skeptic (contested claims)
 ---

@@ -1,0 +1,12 @@
+{"accepted": false, "budget_consumed": 0.0, "budget_reserved": 2.0, "candidate_revision": null, "state": "assigned", "step": "ASSIGN", "task_id": "trace-task-1", "version": 0}
+{"accepted": false, "budget_consumed": 0.0, "budget_reserved": 2.0, "candidate_revision": null, "state": "ready", "step": "READY", "task_id": "trace-task-1", "version": 1}
+{"accepted": false, "budget_consumed": 0.0, "budget_reserved": 2.0, "candidate_revision": null, "lease_epoch": 1, "lease_holder": "noesis-forge", "state": "running", "step": "STARTED", "task_id": "trace-task-1", "version": 2}
+{"accepted": false, "budget_consumed": 0.0, "budget_reserved": 2.0, "candidate_revision": "rev-1", "disposition": "backend_success_not_acceptance", "state": "verifying", "step": "RESULT rev-1", "task_id": "trace-task-1", "version": 3}
+{"accepted": false, "budget_consumed": 0.0, "budget_reserved": 2.0, "candidate_revision": "rev-1", "finding_severity": "minor", "state": "running", "step": "SPEC REQUEST_CHANGES", "task_id": "trace-task-1", "version": 4}
+{"accepted": false, "budget_consumed": 1.2, "budget_reserved": 2.0, "candidate_revision": "rev-1", "state": "running", "step": "CONSUME attempt-1 usage", "task_id": "trace-task-1", "version": 5}
+{"accepted": false, "budget_consumed": 1.2, "budget_reserved": 2.0, "candidate_revision": "rev-1", "state": "running", "step": "RETRY a2 (lease re-bound)", "task_id": "trace-task-1", "version": 6}
+{"accepted": false, "budget_consumed": 1.2, "budget_reserved": 2.0, "candidate_revision": "rev-2", "spec_reviews_invalidated": true, "state": "verifying", "step": "RESULT rev-2 (remediation)", "task_id": "trace-task-1", "version": 7}
+{"accepted": false, "budget_consumed": 1.2, "budget_reserved": 2.0, "candidate_revision": "rev-2", "state": "spec_review", "step": "SPEC PASS (rev-2)", "task_id": "trace-task-1", "version": 8}
+{"accepted": false, "budget_consumed": 1.2, "budget_reserved": 2.0, "candidate_revision": "rev-2", "state": "verifying", "step": "QUALITY APPROVED (rev-2)", "task_id": "trace-task-1", "version": 9}
+{"accepted": true, "accepted_by": "noesis-orchestrator", "budget_consumed": 1.2, "budget_reserved": 2.0, "candidate_revision": "rev-2", "state": "completed", "step": "ACCEPTED", "task_id": "trace-task-1", "version": 10}
+{"accepted": true, "budget_consumed": 1.2, "budget_reserved": 2.0, "relaunch": false, "reviews": 2, "state": "completed", "step": "LEDGER RELOAD (restart)", "surviving": true, "task_id": "trace-task-1", "version": 10}

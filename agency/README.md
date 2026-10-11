@@ -22,7 +22,7 @@ Two-tier integration of the [Agency agent catalog](https://github.com/msitarzews
 1. **Tier A is capped at 18** (one per division). Expanding past 1/division
    requires a recorded routing smoke test first (`ROUTING-SMOKE.md` outcome +
    validator cosine < 0.85).
-2. **All Tier A profiles are advisory-only**: `reports_to: noesis-core`, no
+2. **All Tier A profiles are advisory-only**: `reports_to: noesis-orchestrator`, no
    privileged tools, no secret access, no autonomous execution; production /
    credential / financial actions require human approval.
 3. **Tier A specs are generated, not committed.** Live materialization is
@@ -118,7 +118,7 @@ whose precondition is not met and reassess.
    `$HERMES_HOME/profiles` not present in the snapshot).
 6. **Verify fleet shape:** `hermes profile list` — expected names only
    (noesis 15 + `default`; agency profiles only if wave apply was authorized).
-7. **Verify one canary profile loads:** `hermes profile use noesis-core`
+7. **Verify one canary profile loads:** `hermes profile use noesis-orchestrator`
    (or `default`) then a trivial `hermes` command.
 8. **Record the rollback** in the audit log (append a JSONL line with
    `status: "rollback"` and the same `roster_sha256`) and open an issue.

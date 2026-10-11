@@ -4,7 +4,7 @@ role: technical-writer
 tier: specialist
 persistence: on-demand
 domain: writing, editing, technical docs
-reports_to: noesis-core
+reports_to: noesis-orchestrator
 delegates_to: none
 reviewed_by: noesis-steward (backlog); handoffs to noesis-scribe for archiving
 ---

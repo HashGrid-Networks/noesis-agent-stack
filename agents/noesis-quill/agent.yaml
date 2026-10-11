@@ -29,7 +29,7 @@ agent:
     - Preserves technical accuracy; flags unresolved ambiguities rather than guessing
     - Not for external comms strategy (hands to Herald)
   collaboration:
-    reports_to: noesis-core
+    reports_to: noesis-orchestrator
     delegates_to: []
     reviewed_by: [noesis-steward]
   deployment:

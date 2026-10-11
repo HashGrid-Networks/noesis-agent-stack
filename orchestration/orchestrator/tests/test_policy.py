@@ -44,7 +44,7 @@ class TestRosterBackedAssignment:
     def test_supervisor_profile_cannot_be_assigned_work(self, orch):
         """A supervisor delegates; it must not be handed executing work."""
         with pytest.raises(PolicyViolation) as exc:
-            make_task(orch, assignee_profile="noesis-core", required_capability="route")
+            make_task(orch, assignee_profile="noesis-orchestrator", required_capability="route")
         assert exc.value.code == "supervisor_cannot_execute"
 
     def test_orchestrator_cannot_assign_work_to_itself(self, orch):
