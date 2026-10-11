@@ -101,6 +101,20 @@
         },
         "revoked": {
           "type": "boolean"
+        },
+        "attempt_epoch": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "execution_released_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
         }
       },
       "required": [

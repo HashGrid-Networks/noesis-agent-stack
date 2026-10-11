@@ -194,6 +194,11 @@ class Delegation:
     approved_provider: str | None = None
     approved_model: str | None = None
     launch_reservation: dict[str, Any] | None = None
+    # Execution-ownership fencing. None = unknown/absent on old records;
+    # never invent authority on replay.
+    attempt_epoch: int | None = None
+    execution_released_at: datetime | None = None
+    execution_revoked: bool = False
 
     def current_reviews(self, stage: str) -> list[ReviewRecord]:
         rev = self.candidate_revision
@@ -419,6 +424,9 @@ class TaskContract:
             "approved_provider": self.delegation.approved_provider,
             "approved_model": self.delegation.approved_model,
             "launch_reservation": self.delegation.launch_reservation,
+            "attempt_epoch": self.delegation.attempt_epoch,
+            "execution_released_at": _iso(self.delegation.execution_released_at),
+            "execution_revoked": self.delegation.execution_revoked,
             "reviews": [
                 {
                     "stage": r.stage,

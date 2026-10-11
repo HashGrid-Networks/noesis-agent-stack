@@ -282,24 +282,24 @@ class TestDelegationLifecycleOnAuthoritativeLedger:
         with pytest.raises(PolicyViolation, match="budget_exceeded"):
             orch.accept(task.task_id)
 
-    def test_lease_expiry_blocks_acceptance(self, orch):
+    def test_accept_after_claim_lease_expiry_when_execution_released(self, orch):
         orch = Orchestrator(orch.store.ledger_path)
         task = dispatched_coding(orch)
-        # Force an expired lease (keep it a datetime for correct comparison).
-        from datetime import timedelta
-
-        claim = dict(task.claim)
-        claim["lease_expires_at"] = task.claim["lease_expires_at"] - timedelta(hours=2)
-        task.claim = claim
-        orch.store.put(task, event="lease_forced_expired")
         orch.submit_handoff(task.task_id, _handoff())
         orch.submit_candidate(task.task_id, candidate_revision="rev-1")
+        from datetime import timedelta
+
+        live = orch.store.get(task.task_id)
+        claim = dict(live.claim)
+        claim["lease_expires_at"] = live.claim["lease_expires_at"] - timedelta(hours=2)
+        live.claim = claim
+        orch.store.put(live, event="lease_forced_expired")
         orch.record_review(task.task_id, stage="spec", verdict="PASS",
                            reviewer="noesis-sentinel", candidate_revision="rev-1")
         orch.record_review(task.task_id, stage="quality", verdict="APPROVED",
                            reviewer="noesis-skeptic", candidate_revision="rev-1")
-        with pytest.raises(PolicyViolation, match="lease_expired"):
-            orch.accept(task.task_id)
+        done = orch.accept(task.task_id)
+        assert done.state == "succeeded"
 
 
 class TestDelegationProjectionAndPluginPath:

@@ -519,6 +519,26 @@
             "null"
           ],
           "description": "Repository HEAD or manifest digest used as the launch baseline; null before the task has ever been claimed (deliberate pre-assignment state), a required non-null string from 'claimed' onward (see the root-level conditional); fail-closed on mismatch."
+        },
+        "attempt_epoch": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Monotonic execution-attempt fence. Null on records written before this field existed; never invent authority on replay."
+        },
+        "execution_released_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "Wall-clock instant execution ownership was released at candidate submission. Null means unknown/unreleased."
+        },
+        "execution_revoked": {
+          "type": "boolean",
+          "default": false
         }
       }
     },

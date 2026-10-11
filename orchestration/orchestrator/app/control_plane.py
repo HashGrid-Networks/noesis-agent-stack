@@ -862,13 +862,20 @@ class Orchestrator:
         *,
         candidate_revision: str,
         candidate_digest: str | None = None,
+        attempt_epoch: int | None = None,
     ) -> TaskContract:
         """Record the specialist's candidate revision on the authoritative task.
 
         A candidate change automatically invalidates reviews bound to an older
-        revision, so an approval can never apply to a stale diff.
+        revision, so an approval can never apply to a stale diff. Submission
+        releases execution ownership for the current attempt_epoch.
         """
         task = self._require(task_id)
+        if task.delegation.execution_revoked:
+            raise PolicyViolation(
+                "execution_revoked",
+                "revoked execution authority cannot submit a candidate",
+            )
         if task.state not in ("running", "awaiting_review"):
             raise PolicyViolation(
                 "not_submitting",
@@ -879,6 +886,23 @@ class Orchestrator:
         revision_changed = bool(prior_revision) and prior_revision != candidate_revision
         # Same label with a different digest must not retain approval.
         digest_changed = prior_revision is not None and prior_digest != candidate_digest
+        current_epoch = task.delegation.attempt_epoch
+        released = task.delegation.execution_released_at
+        if attempt_epoch is not None:
+            if current_epoch != attempt_epoch:
+                raise PolicyViolation(
+                    "stale_attempt_report",
+                    f"attempt_epoch {attempt_epoch} != current {current_epoch}",
+                )
+            if released is not None and (revision_changed or digest_changed):
+                raise PolicyViolation(
+                    "stale_attempt_report",
+                    "execution already released for this epoch",
+                )
+        if current_epoch is None:
+            task.delegation.attempt_epoch = 1
+        elif (revision_changed or digest_changed) and released is not None and attempt_epoch is None:
+            task.delegation.attempt_epoch = current_epoch + 1
         if revision_changed or digest_changed:
             task.delegation.reviews = [] if digest_changed else [
                 r
@@ -887,6 +911,10 @@ class Orchestrator:
             ]
         task.delegation.candidate_revision = candidate_revision
         task.delegation.candidate_digest = candidate_digest
+        if task.delegation.execution_released_at is None:
+            task.delegation.execution_released_at = utcnow()
+        elif revision_changed or digest_changed:
+            task.delegation.execution_released_at = utcnow()
         next_state = "awaiting_review" if task.reviewer_profile else "running"
         if task.state != next_state:
             task.transition_to(next_state)
@@ -966,10 +994,13 @@ class Orchestrator:
 
         Completes the authoritative task only when evidence is present, a
         candidate was submitted, reviewer gates pass for the CURRENT candidate,
-        no open critical/important findings remain, the lease is active, and the
+        no open critical/important findings remain, execution has been released
+        (or a legacy unreleased record still has a live claim lease), and the
         shared budget is not exceeded.
         """
         task = self._require(task_id)
+        if operator != "noesis-orchestrator":
+            raise PolicyViolation("unauthorized_actor", "only the orchestrator accepts results")
         if task.state not in ("running", "awaiting_review"):
             raise PolicyViolation("not_acceptable", f"task is '{task.state}', cannot accept")
         if task.delegation.budget_exceeded():
@@ -977,7 +1008,7 @@ class Orchestrator:
                 "budget_exceeded",
                 f"request budget {task.delegation.requests_used} exceeds limit {task.delegation.request_limit}",
             )
-        if task.lease_expired():
+        if task.delegation.execution_released_at is None and task.lease_expired():
             raise PolicyViolation("lease_expired", "cannot accept work whose lease expired")
         if not task.handoff:
             raise PolicyViolation("evidence_required", "cannot accept without handler evidence")
@@ -1116,6 +1147,7 @@ class Orchestrator:
         task = self._require(task_id)
         self._cleanup_if_managed(task)
         task = self._require(task_id)
+        task.delegation.execution_revoked = True
         task.transition_to("cancelled", reason=reason)
         return self.store.put(task, event="task_cancelled")
 

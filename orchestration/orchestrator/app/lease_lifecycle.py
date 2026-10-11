@@ -1,13 +1,12 @@
 """Bounded execution-lease lifecycle, extracted from DelegationStore.
 
-DelegationStore.Lease remains the on-disk source of truth. This module
-formalizes the execution-ownership state machine and the monotonic
-attempt_epoch used to detect stale-attempt replays. Existing
-DelegationStore method bodies are unchanged; callers opt in through
-extract_from_delegation / start_running / lease_renew / release_lease.
+DelegationStore.Lease is the on-disk source of truth. Production
+start_running / submit_verifying / accept persist attempt_epoch and
+execution_released_at through the canonical task snapshot.
 
 Design: LEASE-LIFECYCLE-DESIGN.md (inspected 2026-10-11). Bounded
-renewal is the 2026-10-11 operator-approved exception to design §6.
+renewal is the 2026-10-11 operator-approved exception to design §6
+and is refused after release, revocation, or during review.
 """
 from __future__ import annotations
 
@@ -107,11 +106,7 @@ def _transition(lease: Lease, new_state: LeaseState) -> Lease:
 
 
 def _persist(store: Any, lease: Lease) -> None:
-    """Pass attempt_epoch through the DelegationStore JSONL write path.
-
-    Extra keys are ignored by DelegationStore._replay (which reads record['task']).
-    Replays are detectable because each start_running appends the epoch.
-    """
+    """Persist lifecycle fields through DelegationStore._mutate (version fence)."""
     if store is None:
         return
     task = store.get(lease.task_id) if lease.task_id else None
@@ -119,26 +114,29 @@ def _persist(store: Any, lease: Lease) -> None:
         raise LeaseTransitionError(
             "fail-closed: cannot persist lease without a task on the ledger"
         )
-    record = {
-        "task": asdict(task),
-        "attempt_epoch": lease.attempt_epoch,
-        "lease_lifecycle": {
-            "task_id": lease.task_id,
-            "state": str(lease.state),
-            "attempt_epoch": lease.attempt_epoch,
-            "holder": lease.holder,
-            "issued_at": lease.issued_at.isoformat(),
-            "expires_at": lease.expires_at.isoformat(),
-            "execution_released_at": (
-                None
-                if lease.execution_released_at is None
-                else lease.execution_released_at.isoformat()
-            ),
-            "revoked": lease.revoked,
-        },
-    }
-    with store.ledger_path.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(record) + "\n")
+    from .delegation import Lease as StoreLease
+
+    existing = task.lease
+    if existing is None:
+        raise LeaseTransitionError(
+            "fail-closed: cannot persist lease without a store lease"
+        )
+    released = lease.execution_released_at
+    released_s = None if released is None else (
+        released.isoformat() if isinstance(released, datetime) else str(released)
+    )
+    issued = lease.issued_at.isoformat() if isinstance(lease.issued_at, datetime) else str(lease.issued_at)
+    expires = lease.expires_at.isoformat() if isinstance(lease.expires_at, datetime) else str(lease.expires_at)
+    task.lease = StoreLease(
+        holder=existing.holder,
+        epoch=existing.epoch,
+        issued_at=issued,
+        expires_at=expires,
+        revoked=lease.revoked,
+        attempt_epoch=lease.attempt_epoch,
+        execution_released_at=released_s,
+    )
+    store._mutate(task, event="lease_lifecycle")
 
 
 def extract_from_delegation(task: Any) -> Lease:
@@ -162,18 +160,24 @@ def extract_from_delegation(task: Any) -> Lease:
     issued_at = _parse_dt(src.issued_at)
     expires_at = _parse_dt(src.expires_at)
     now = _now()
+    persisted_epoch = getattr(src, "attempt_epoch", None)
+    persisted_release = getattr(src, "execution_released_at", None)
+    released_at = None if persisted_release in (None, "") else _parse_dt(persisted_release)
     if src.revoked:
         state = LeaseState.revoked
-        released_at = issued_at
-        epoch = 0
+        epoch = persisted_epoch if persisted_epoch is not None else 0
+        if released_at is None:
+            released_at = issued_at
+    elif released_at is not None:
+        state = LeaseState.released
+        epoch = persisted_epoch if persisted_epoch is not None else 0
     elif expires_at <= now:
         state = LeaseState.expired
+        epoch = persisted_epoch if persisted_epoch is not None else 0
         released_at = expires_at
-        epoch = 0
     else:
         state = LeaseState.held
-        released_at = None
-        epoch = 1
+        epoch = persisted_epoch if persisted_epoch is not None else 1
     return Lease(
         holder=str(src.holder),
         issued_at=issued_at,
@@ -267,7 +271,13 @@ def lease_renew(
 
 
 def load_attempt_epoch(store: Any, task_id: str) -> int | None:
-    """Last written attempt_epoch for task_id, or None if never persisted."""
+    """Current attempt_epoch for task_id from canonical store state, or None."""
+    task = store.get(task_id) if hasattr(store, "get") else None
+    if task is not None:
+        lease = getattr(task, "lease", None)
+        epoch = getattr(lease, "attempt_epoch", None) if lease is not None else None
+        if epoch is not None:
+            return int(epoch)
     path = store.ledger_path
     if not path.exists():
         return None
@@ -276,11 +286,11 @@ def load_attempt_epoch(store: Any, task_id: str) -> int | None:
         if not line.strip():
             continue
         record = json.loads(line)
-        epoch = record.get("attempt_epoch")
-        life = record.get("lease_lifecycle") or {}
+        nested = (record.get("task") or {}).get("lease") or {}
+        epoch = nested.get("attempt_epoch")
         if epoch is None:
-            epoch = life.get("attempt_epoch")
-        tid = (record.get("task") or {}).get("task_id") or life.get("task_id")
+            epoch = record.get("attempt_epoch")
+        tid = (record.get("task") or {}).get("task_id")
         if tid == task_id and epoch is not None:
             last = int(epoch)
     return last

@@ -51,6 +51,42 @@ def _require_dt(value: str | None) -> datetime:
     return parsed
 
 
+def _optional_attempt_epoch(raw: dict[str, Any]) -> int | None:
+    if "attempt_epoch" not in raw:
+        return None
+    value = raw["attempt_epoch"]
+    if value is None:
+        return None
+    if type(value) is not int:
+        raise ValueError(f"attempt_epoch must be an integer, got {type(value).__name__}")
+    if value < 0:
+        raise ValueError("attempt_epoch must be non-negative")
+    return value
+
+
+def _optional_released_at(raw: dict[str, Any]) -> datetime | None:
+    if "execution_released_at" not in raw:
+        return None
+    value = raw["execution_released_at"]
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("execution_released_at must be an ISO timestamp string")
+    parsed = _parse_dt(value)
+    if parsed is None:
+        raise ValueError("execution_released_at must be an ISO timestamp")
+    return parsed
+
+
+def _optional_execution_revoked(raw: dict[str, Any]) -> bool:
+    if "execution_revoked" not in raw:
+        return False
+    value = raw["execution_revoked"]
+    if isinstance(value, bool):
+        return value
+    raise ValueError(f"execution_revoked must be a boolean, got {type(value).__name__}")
+
+
 class TaskStore:
     """Append-only JSONL task ledger with a replayed in-process index."""
 
@@ -243,6 +279,9 @@ class TaskStore:
             approved_provider=del_raw.get("approved_provider"),
             approved_model=del_raw.get("approved_model"),
             launch_reservation=del_raw.get("launch_reservation"),
+            attempt_epoch=_optional_attempt_epoch(del_raw),
+            execution_released_at=_optional_released_at(del_raw),
+            execution_revoked=_optional_execution_revoked(del_raw),
             reviews=[
                 ReviewRecord(
                     stage=rev["stage"],

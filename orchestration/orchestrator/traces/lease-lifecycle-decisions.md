@@ -89,3 +89,18 @@ Path: `app/delegation.py` import of `lease_lifecycle` + re-export of
 `extract_from_delegation` / `lease_renew`
 Decision: no existing function body rewritten. Planner F1–F5 behavior is
 untouched. Lifecycle callers may import from either module.
+
+## production integration (2026-10-11 remediation)
+
+Design: LEASE-LIFECYCLE-DESIGN.md §3 / I1–I5; Sentinel F1–F5, E1.
+Path: `DelegationStore.start_running` / `submit_verifying` / `accept` /
+`lease_renew`; `Orchestrator.submit_candidate` / `accept`; `Delegation.attempt_epoch`
+and `execution_released_at` via `TaskContract.to_dict` + `TaskStore._rehydrate`.
+Decision: persist `attempt_epoch` and `execution_released_at` on the canonical
+task/lease snapshot (not an unlocked extra JSONL key). Submit releases
+execution one-way and stamps `execution_released_at`. Same-epoch stale
+worker submits fail closed. A new candidate without an expected epoch is a
+new attempt (epoch++). Acceptance after release does not require wall-clock
+lease liveness; old records with absent fields keep the legacy lease gate.
+`lease_renew` is version-fenced, persisted via `_mutate`, and refused after
+release/revocation or during review. `_require_bool` replay remains.

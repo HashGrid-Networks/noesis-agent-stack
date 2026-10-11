@@ -39,8 +39,6 @@ from uuid import uuid4
 
 from . import lease_lifecycle
 
-# Additive re-export of the bounded lease-lifecycle API. DelegationStore.Lease
-# remains the on-disk source of truth; existing method bodies are unchanged.
 extract_from_delegation = lease_lifecycle.extract_from_delegation
 lease_renew = lease_lifecycle.lease_renew
 
@@ -88,6 +86,8 @@ class Lease:
     issued_at: str
     expires_at: str
     revoked: bool = False
+    attempt_epoch: int | None = None
+    execution_released_at: str | None = None
 
     @property
     def is_active(self) -> bool:
@@ -100,6 +100,40 @@ def _utcnow() -> str:
 
 def _lease_expiry(seconds: int = 1800) -> str:
     return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
+
+
+def _optional_attempt_epoch(data: dict[str, Any], *, field: str = "attempt_epoch") -> int | None:
+    if field not in data:
+        return None
+    value = data[field]
+    if value is None:
+        return None
+    if type(value) is not int:
+        raise ActivationError(f"{field} must be an integer, got {type(value).__name__}")
+    if value < 0:
+        raise ActivationError(f"{field} must be non-negative")
+    return value
+
+
+def _optional_released_at(data: dict[str, Any], *, field: str = "execution_released_at") -> str | None:
+    if field not in data:
+        return None
+    value = data[field]
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise ActivationError(f"{field} must be an ISO timestamp string")
+    try:
+        datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ActivationError(f"{field} must be an ISO timestamp") from exc
+    return value
+
+
+def _replace_lease(lease: Lease, **changes: Any) -> Lease:
+    payload = asdict(lease)
+    payload.update(changes)
+    return Lease(**payload)
 
 
 @dataclass
@@ -430,6 +464,10 @@ class DelegationStore:
         self._check_version(task, expected_task_version)
         if by != task.assignee_profile:
             raise ActivationError("only the assigned specialist consumes budget")
+        if task.lease is not None and task.lease.revoked:
+            raise ActivationError("execution authority revoked; worker action refused")
+        if task.lease is not None and task.lease.execution_released_at is not None:
+            raise ActivationError("stale_attempt_report: execution already released")
         if amount < 0:
             raise ActivationError("consumption amount must be non-negative")
         with self._lock:
@@ -459,13 +497,18 @@ class DelegationStore:
             raise ActivationError("only the assigned specialist may start execution")
         if task.state not in {TaskState.ready, TaskState.running}:
             raise ActivationError(f"task {task_id} is {task.state}, not ready")
-        if task.lease is not None and not task.lease.is_active:
+        if task.lease is not None and (task.lease.revoked or not task.lease.is_active):
             raise ActivationError("lease expired or revoked; cannot start execution")
+        next_epoch = 1
+        if task.lease is not None and task.lease.attempt_epoch is not None:
+            next_epoch = task.lease.attempt_epoch + 1
         task.lease = Lease(
             holder=by,
             epoch=task.assignment_epoch,
             issued_at=_utcnow(),
             expires_at=_lease_expiry(),
+            attempt_epoch=next_epoch,
+            execution_released_at=None,
         )
         task.state = TaskState.running
         return self._mutate(task, event="started")
@@ -477,11 +520,21 @@ class DelegationStore:
         by: str,
         candidate_revision: str,
         expected_task_version: int | None = None,
+        expected_attempt_epoch: int | None = None,
     ) -> DelegatedTask:
         task = self._require(task_id)
         self._check_version(task, expected_task_version)
         if by != task.assignee_profile:
             raise ActivationError("only the assigned specialist may submit results")
+        if task.lease is not None and task.lease.revoked:
+            raise ActivationError("execution authority revoked; worker action refused")
+        current_epoch = task.lease.attempt_epoch if task.lease is not None else None
+        released = task.lease.execution_released_at if task.lease is not None else None
+        if expected_attempt_epoch is not None:
+            if current_epoch != expected_attempt_epoch:
+                raise ActivationError("stale_attempt_report: attempt_epoch mismatch")
+            if released is not None and task.candidate_revision != candidate_revision:
+                raise ActivationError("stale_attempt_report: execution already released for this epoch")
         # Duplicate RESULT for the same candidate revision is idempotent.
         if task.state is TaskState.verifying and task.candidate_revision == candidate_revision:
             return task
@@ -492,8 +545,17 @@ class DelegationStore:
             raise ActivationError(f"task {task_id} is {task.state}, not running/verifying/spec_review")
         if task.candidate_revision != candidate_revision:
             task.reviews = [r for r in task.reviews if r.candidate_revision == candidate_revision]
+        next_epoch = current_epoch if current_epoch is not None else 1
+        if released is not None and task.candidate_revision != candidate_revision:
+            next_epoch = (current_epoch or 0) + 1
         task.candidate_revision = candidate_revision
         task.state = TaskState.verifying
+        if task.lease is not None:
+            task.lease = _replace_lease(
+                task.lease,
+                attempt_epoch=next_epoch,
+                execution_released_at=released or _utcnow(),
+            )
         return self._mutate(task, event="verifying")
 
     def record_review(
@@ -550,7 +612,14 @@ class DelegationStore:
             task.state = TaskState.running
         return self._mutate(task, event=f"review:{stage}:{verdict}")
 
-    def accept(self, task_id: str, *, by: str, expected_task_version: int | None = None) -> DelegatedTask:
+    def accept(
+        self,
+        task_id: str,
+        *,
+        by: str,
+        expected_task_version: int | None = None,
+        expected_attempt_epoch: int | None = None,
+    ) -> DelegatedTask:
         task = self._require(task_id)
         self._check_version(task, expected_task_version)
         if by != ORCHESTRATOR_ID:
@@ -560,10 +629,25 @@ class DelegationStore:
             return task
         if task.state is not TaskState.verifying:
             raise ActivationError(f"task {task_id} is {task.state}; only verifying tasks are accepted")
-        if not task.lease or not task.lease.is_active:
-            raise ActivationError("lease is inactive; abort and reconcile before acceptance")
-        spec_ok = any(r.stage == "spec" and r.verdict == "PASS" for r in task.reviews)
-        quality_ok = any(r.stage == "quality" and r.verdict == "APPROVED" for r in task.reviews)
+        current_epoch = task.lease.attempt_epoch if task.lease is not None else None
+        if expected_attempt_epoch is not None and current_epoch != expected_attempt_epoch:
+            raise ActivationError("stale_attempt_report: attempt_epoch mismatch")
+        released = task.lease.execution_released_at if task.lease is not None else None
+        if not released:
+            if not task.lease or not task.lease.is_active:
+                raise ActivationError("lease is inactive; abort and reconcile before acceptance")
+        spec_ok = any(
+            r.stage == "spec"
+            and r.verdict == "PASS"
+            and r.candidate_revision == task.candidate_revision
+            for r in task.reviews
+        )
+        quality_ok = any(
+            r.stage == "quality"
+            and r.verdict == "APPROVED"
+            and r.candidate_revision == task.candidate_revision
+            for r in task.reviews
+        )
         if not (spec_ok and quality_ok):
             raise ActivationError("acceptance requires spec PASS and quality APPROVED")
         task.accepted = True
@@ -584,6 +668,34 @@ class DelegationStore:
         task.state = TaskState.cancelled
         task.last_event = f"cancelled: {reason}"
         return self._mutate(task, event="cancelled")
+
+    def lease_renew(
+        self,
+        task_id: str,
+        *,
+        duration: int | float | timedelta,
+        expected_attempt_epoch: int,
+        by: str,
+        expected_task_version: int | None = None,
+    ) -> DelegatedTask:
+        """Bounded renew of a still-held execution lease. Never during review."""
+        task = self._require(task_id)
+        self._check_version(task, expected_task_version)
+        if by != task.assignee_profile:
+            raise ActivationError("only the assigned specialist may renew an execution lease")
+        if task.lease is None:
+            raise ActivationError("fail-closed: lease is not held")
+        if task.lease.revoked:
+            raise ActivationError("execution authority revoked; worker action refused")
+        if task.lease.execution_released_at is not None:
+            raise ActivationError("stale_attempt_report: execution already released")
+        if task.state in {TaskState.verifying, TaskState.spec_review, TaskState.quality_review}:
+            raise ActivationError("lease_renew refused during review")
+        life = lease_lifecycle.extract_from_delegation(task)
+        renewed = lease_lifecycle.lease_renew(life, duration, expected_attempt_epoch)
+        expires = renewed.expires_at.isoformat() if isinstance(renewed.expires_at, datetime) else str(renewed.expires_at)
+        task.lease = _replace_lease(task.lease, expires_at=expires)
+        return self._mutate(task, event="lease_renewed")
 
     def expire_lease(self, task_id: str) -> DelegatedTask:
         task = self._require(task_id)
@@ -618,6 +730,8 @@ def _task_from_dict(data: dict[str, Any]) -> DelegatedTask:
             issued_at=lease_data["issued_at"],
             expires_at=lease_data["expires_at"],
             revoked=_require_bool(lease_data.get("revoked", False), field="lease.revoked"),
+            attempt_epoch=_optional_attempt_epoch(lease_data),
+            execution_released_at=_optional_released_at(lease_data),
         )
     reviews = [Review(**r) for r in data.get("reviews") or []]
     return DelegatedTask(
