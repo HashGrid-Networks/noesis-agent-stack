@@ -37,6 +37,13 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from . import lease_lifecycle
+
+# Additive re-export of the bounded lease-lifecycle API. DelegationStore.Lease
+# remains the on-disk source of truth; existing method bodies are unchanged.
+extract_from_delegation = lease_lifecycle.extract_from_delegation
+lease_renew = lease_lifecycle.lease_renew
+
 PROTOCOL_VERSION = "noesis.delegated-task/v1"
 ORCHESTRATOR_ID = "noesis-orchestrator"
 IMPLEMENTER_ID = "noesis-forge"
