@@ -2,11 +2,12 @@
 
 **Repository:** `git@github.com:enuno/noesis-agent-stack.git`
 **Branch:** `a6-checkpoint/2026-10-11` (operator fork `enuno/noesis-agent-stack`)
-**Latest commit:** `ef2fc28` (routing rehearsal matrix evidence; pushed)
-**Suite:** **342 passed / 0 failed** (`orchestration/orchestrator/tests/`, ~40s)
-**Status:** Implementation complete; offline + read-only-live verification complete;
-Subgoal 5 live specialist cycle, plugin canary, and persistent activation are
-separately authorized milestones.
+**Latest commit:** `308d2d5` (HARDENING-1 halted; route blocker; pushed)
+**Suite:** **360 passed / 0 failed** (`orchestration/orchestrator/tests/`, ~43s)
+**Status:** Specialist routing + planner + delivery-loop planner + delegated-task
+state + lease-lifecycle design complete; HARDENING-1 implementation copy-ready
+for operator-mediated hand-carry. Production release candidate and deployment
+approval package held; not granted.
 
 ---
 
@@ -240,12 +241,15 @@ remove 6 ADD; verified procedure, HEAD stays `c5733167…`).
 | 2 | Live plugin canary + persistent activation | Separate explicit authorization |
 | 3 | Venice API key rotation | **Operator action at Venice provider** — key value is on `origin/main` + pushed branches (public); working tree and `745bb95`+ blobs clean; history not rewritten (destructive, approval-gated) |
 | 4 | Hermes dev-source push to public remote | Target-specific authorization (`enuno/hermes-agent`) |
-| 5 | HARDENING-1 (file-integrity attestation) | Decision: opt-in (recommended) vs mandatory |
+| 5 | ~~HARDENING-1 (file-integrity attestation) mode decision~~ **DONE** (2026-10-11) | none — operator chose opt-in via `expected_candidate_digest`; preserves v3 standalone behavior; fails closed on mismatch |
 | 6 | Governed-loops/graph Phases 3–4 | Authorization to proceed beyond P1/P2 |
 | 7 | Runtime fencing / mTLS | Infrastructure change, approval-gated |
-| 8 | Planner qualification review (NOESIS-LOOP-GRAPH-V1) | Operator hand-carry of `workspace/loop-graph-slice/sentinel-request.md`, then `skeptic-request.md` after PASS (exact snapshot `f2127745…`) |
-| 9 | Lease-lifecycle implementation | Approval of design `workspace/loop-graph-slice/LEASE-LIFECYCLE-DESIGN.md` (queued second) |
-| 10 | HARDENING-1 implementation | Operator decision received (opt-in via `expected_candidate_digest`); 2/2 `noesis-forge` attempts on the authorized `nous/kimi-k2.7-code` lane returned SIGINT (exit 130) at ~610s awaiting model response with no output and no workspace mutation; halted with a single route blocker per bounded-retry rule. Logs `~/.hermes/profiles/noesis-orchestrator/cache/hardening1-forge-{1,2}.log`. Workspace clean at `553a06bdbc8d9dfc3e451f15adf67151be27b6f6`. Operator choice required: (a) authorize a provider-lane switch and reload attempt budget, (b) revert to design-only delivery, or (c) hand-carry the implementation in the operator's own `noesis-forge` context. |
+| 8 | Planner qualification review (NOESIS-LOOP-GRAPH-V1) | Operator hand-carry of `workspace/loop-graph-slice/sentinel-request.md`, then `skeptic-request.md` after PASS. Reproducible snapshot digest `a4519bd6556d3f98030928349b336c0bc46aeb2846e3ad23dec85358a85e8b19` per `workspace/loop-graph-slice/SNAPSHOT-DIGEST-RECIPE.md`; legacy `f2127745…` is historical only. |
+| 9 | Lease-lifecycle implementation | Approval of design `workspace/loop-graph-slice/LEASE-LIFECYCLE-DESIGN.md` + brief `workspace/loop-graph-slice/LEASE-LIFECYCLE-APPROVAL-BRIEF.md` (queued second) |
+| 10 | ~~HARDENING-1 implementation route decision~~ **DONE** (2026-10-11) | none — operator chose option C: hand-carry in operator's own `noesis-forge` context. Copy-ready handoff staged at `workspace/a6-v3-prototype-install/HARDENING-1-FORGE-IMPLEMENTATION-HANDOFF.md` (operator-mediated, no implementation dispatch from this profile). |
+| 11 | Planner snapshot digest reproducibility | None for the implementation; legacy `f2127745…` was non-reproducible (7 candidate recipes tried, none matched). New canonical recipe in `workspace/loop-graph-slice/SNAPSHOT-DIGEST-RECIPE.md`; reproducible digest `a4519bd6…`; per-file SHAs unchanged. Reviewer recipes updated. |
+| 12 | Lease-lifecycle implementation approval | One-line operator decision on `LEASE-LIFECYCLE-APPROVAL-BRIEF.md` (changes authority semantics, additive fields, review-gated, no new provider/budget) |
+| 13 | LLM-wiki reference integration | None required; wiki used as reference for loop engineering, knowledge graph, evidence/provenance, retrieval, bounded evaluation. Gap map at `workspace/a6-v3-prototype-install/LLM-WIKI-GAP-MAP.md`. Production-release backlog sequenced (10 items). Graph remains a derived projection; no new authority store introduced. |
 
 ---
 
@@ -263,3 +267,39 @@ remove 6 ADD; verified procedure, HEAD stays `c5733167…`).
 **The goal is complete to the maximum extent achievable without live-execution
 authorization.** The single remaining core milestone is Subgoal 5, fully
 prepared and blocked on one operator decision.
+
+---
+
+## Copy-ready handoffs (staged 2026-10-11, operator-mediated)
+
+All five handoffs are untracked files in `workspace/` (gitignored by design;
+operator hand-carries from the local filesystem). Reviewer dispatch and
+HARDENING-1 implementation dispatch are NOT performed from this profile.
+
+| # | Artifact | Purpose | Path |
+|---|---|---|---|
+| A | Sentinel spec-review prompt | Hand-carry to a fresh `noesis-sentinel` context. Verifies the planner against the reproducible snapshot digest `a4519bd6…` and the canonical recipe. | `workspace/loop-graph-slice/sentinel-request.md` |
+| B | HARDENING-1 Forge implementation prompt | Copy-paste into a fresh `noesis-forge` session in the operator's own context. Implements file-integrity attestation in the dev-source checkout at `553a06b…`, opt-in via `expected_candidate_digest`, ~50 LoC + ~150 LoC tests. | `workspace/a6-v3-prototype-install/HARDENING-1-FORGE-IMPLEMENTATION-HANDOFF.md` |
+| C | Skeptic quality/security prompt | After Sentinel PASS. Hand-carry to a fresh `noesis-skeptic` context. Adversarial lens; verifies scope-binding soundness, citation integrity, fail-closed completeness. | `workspace/loop-graph-slice/skeptic-request.md` |
+| D | Lease-lifecycle approval brief | One-line operator decision. Changes authority semantics (additive `execution_released_at` + monotonic `attempt_epoch`), review-gated, no new provider/budget. | `workspace/loop-graph-slice/LEASE-LIFECYCLE-APPROVAL-BRIEF.md` |
+| E | LLM-wiki gap map | Source-backed reference for the production release path. 6 critical-path priorities; 10-item sequenced backlog; only exact authorizations needed. | `workspace/a6-v3-prototype-install/LLM-WIKI-GAP-MAP.md` |
+
+Supporting (canonical recipe, used by both reviewer prompts and the operator):
+
+| File | Purpose |
+|---|---|
+| `workspace/loop-graph-slice/SNAPSHOT-DIGEST-RECIPE.md` | Canonical recipe for the planner snapshot digest (legacy `f2127745…` was non-reproducible; canonical `a4519bd6…` is). |
+| `workspace/loop-graph-slice/PLANNER-REVIEW-PACKET.md` | Index of the Sentinel + Skeptic prompts; updated with the reproducible digest. |
+
+**Open material authorizations** (any of which unblocks the next step):
+- (a) Approve the lease-lifecycle implementation per the brief.
+- (b) Approve a push target for the HARDENING-1 commit (Hermes dev-source
+  `origin` is `file:///Users/elvis/.hermes/hermes-agent`; HELD).
+- (c) Operator-mediated hand-carry of the Sentinel prompt (and Skeptic
+  after PASS) to fresh reviewer contexts.
+- (d) Operator-mediated hand-carry of the HARDENING-1 Forge prompt to
+  the operator's own `noesis-forge` context.
+
+Held gates (unchanged): plugin canary/activation, service restart, Venice
+key rotation, noesis-ansible G-1/G-2/G-3 scoping, Phases 3–4, production
+install, merges, public exposure, spending, new provider/lane.
