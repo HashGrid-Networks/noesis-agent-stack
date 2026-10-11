@@ -13,6 +13,27 @@
 > profiles for ≥16/18 divisions; (c) validator description-uniqueness cosine
 > < 0.85 at run time; (d) no live profile outside the declared rosters wins.
 
+## Fleet scope
+
+This smoke test validates routing against the **full declared roster**: both
+profile families are routing candidates and must not lose to an undeclared
+`default`/`coder`/`noesis-orchestrator` fallback unless generic fallback was
+explicitly enabled.
+
+- **In-house Noesis fleet (16):** `profiles/noesis-roster.yaml`, applied under
+  `~/.hermes/profiles/noesis-*`. See `agents/noesis-*` for `SOUL.md`+`agent.yaml`.
+- **Third-party "agency" fleet (18, advisory-only):** generated from
+  `agency/curation.yaml` via `agency/convert.py` (not committed; materialized by
+  `scripts/apply-agency-profiles.sh` / the Ansible `hermes_profiles` role).
+  See `agency/README.md`.
+- **Reviewer-only profiles** (`noesis-sentinel`, `noesis-skeptic`) carry no
+  execution authority and are excluded from winning an implementation row.
+
+The orchestration engine (`orchestration/orchestrator/`) and
+`WORKFLOWS.md` §5 define how these candidates are discovered, policy-checked,
+launched, identity-verified, and validated; this file records the smoke
+evidence for that routing path.
+
 Date: ____-____-____   Operator: ____________   Fleet: wave __ + noesis
 Router plugin: integrations/hermes-plugin (sha256 recorded in apply audit)
 
