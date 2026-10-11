@@ -164,9 +164,15 @@ Tally progression this branch: 261/0 → 334/0 (`ef32a11`) → 337/0 → 339/0 �
 
 ### Unverified / not-live claims (stated honestly)
 
-- **Subgoal 5 live specialist cycle: NOT executed.** Spec fully resolved
-  (`workspace/orchestrator/SUBGOAL5-SANDBOX-SPEC.md`), fixture red-verified,
-  real-CLI rehearsal green. Awaits one operator approval.
+- **Subgoal 5 live specialist cycle: EXECUTED 2026-10-11 (Mode A, operator
+  approval via clarify).** Full pipeline proven live: noesis-forge dispatched
+  with launcher attestation, real implementation, candidate submitted, sentinel
+  spec PASS + skeptic quality APPROVED, both bound to the candidate. Final
+  orchestrator acceptance blocked by design on lease expiry (900s lease
+  undersized for review latency — logged as a hardening finding). Operator
+  decision: closed as designed halt. Full chronology:
+  `workspace/subgoal5-sandbox/SUBGOAL5-LIVE-CYCLE-REPORT.md`. Cycle also
+  surfaced and fixed two live-path defects (`48f84d8`, `366f9eb`).
 - **Plugin canary and persistent activation: NOT executed** (held).
 - **14/14 matrix is attestation-level, not execution-level** — it proves which
   profile the launcher resolves and attests on the live runtime; it does not
@@ -230,7 +236,7 @@ remove 6 ADD; verified procedure, HEAD stays `c5733167…`).
 
 | # | Blocker | Required action |
 |---|---|---|
-| 1 | **Subgoal 5 live specialist cycle** | Operator approval of `workspace/orchestrator/SUBGOAL5-SANDBOX-SPEC.md` |
+| 1 | ~~Subgoal 5 live specialist cycle~~ **DONE** (designed halt on acceptance; operator-closed 2026-10-11) | none — see live-cycle report |
 | 2 | Live plugin canary + persistent activation | Separate explicit authorization |
 | 3 | Venice API key rotation | **Operator action at Venice provider** — key value is on `origin/main` + pushed branches (public); working tree and `745bb95`+ blobs clean; history not rewritten (destructive, approval-gated) |
 | 4 | Hermes dev-source push to public remote | Target-specific authorization (`enuno/hermes-agent`) |
