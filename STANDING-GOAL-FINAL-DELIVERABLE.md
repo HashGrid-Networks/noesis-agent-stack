@@ -243,6 +243,8 @@ remove 6 ADD; verified procedure, HEAD stays `c5733167…`).
 | 5 | HARDENING-1 (file-integrity attestation) | Decision: opt-in (recommended) vs mandatory |
 | 6 | Governed-loops/graph Phases 3–4 | Authorization to proceed beyond P1/P2 |
 | 7 | Runtime fencing / mTLS | Infrastructure change, approval-gated |
+| 8 | Planner qualification review (NOESIS-LOOP-GRAPH-V1) | Operator hand-carry of `workspace/loop-graph-slice/sentinel-request.md`, then `skeptic-request.md` after PASS (exact snapshot `f2127745…`) |
+| 9 | Lease-lifecycle implementation | Approval of design `workspace/loop-graph-slice/LEASE-LIFECYCLE-DESIGN.md` (queued second) |
 
 ---
 
