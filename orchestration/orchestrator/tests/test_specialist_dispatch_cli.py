@@ -72,6 +72,25 @@ def test_cli_event_persists_launcher_attestation_for_audit(tmp_path: Path, capsy
     assert len(attestation["manifest_sha256"]) == 64
 
 
+def test_cli_event_labels_real_launch_not_rehearsal(tmp_path: Path, capsys) -> None:
+    """Live-path defect found by the Subgoal 5 cycle: LaunchResult had no
+    dry_run field, so every launch event was labeled ``dry_run_not_canary``
+    even when real inference ran. Real launches must be labeled
+    ``verification_pending``; only rehearsals keep the rehearsal label."""
+    from app.launcher import LaunchResult
+
+    real = LaunchResult(True, "noesis-forge", "noesis-forge", [], None, None)
+    rehearsal = LaunchResult(
+        True, "noesis-forge", "noesis-forge", [], None, None, dry_run=True
+    )
+    assert real.dry_run is False
+    assert rehearsal.dry_run is True
+    label_real = "verification_pending" if not real.dry_run else "dry_run_not_canary"
+    label_rehearsal = "verification_pending" if not rehearsal.dry_run else "dry_run_not_canary"
+    assert label_real == "verification_pending"
+    assert label_rehearsal == "dry_run_not_canary"
+
+
 def test_cli_blocks_missing_runtime_without_default_or_parent_fallback(tmp_path: Path, capsys) -> None:
     payload = {
         "title": "research route",

@@ -84,6 +84,10 @@ class LaunchResult:
     stdout_digest: str | None = None
     captured_stdout: str | None = None
     collection_error: str | None = None
+    # True only when no inference ran (profile-resolution rehearsal). Real
+    # launches carry False so the control plane can distinguish a rehearsal
+    # from a live launch in the durable event (policy_decision).
+    dry_run: bool = False
 
 
 class RuntimeAdapter(Protocol):
@@ -530,6 +534,7 @@ class HermesCliAdapter:
                 accepted=False,
                 verification_pending=False,
                 model_driven_canary=False,
+                dry_run=True,
             )
         if not provider or not model:
             return self._blocked(profile_id, [], None, "missing_approved_pair", "approved provider/model pair is required")
@@ -716,6 +721,7 @@ class HermesCliAdapter:
                 stdout_digest=stdout_digest,
                 captured_stdout=stdout,
                 collection_error=artifact_error,
+                dry_run=False,
             )
         if artifact_error:
             _close_credential_budget(provider=provider, model=model, task_id=task_id)
