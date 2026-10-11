@@ -22,7 +22,7 @@ Catalog). All specialized work is planned, dispatched, and supervised by the
 orchestrator under explicit approval gates; the stack keeps role separation,
 durable ledgers, and bounded autonomy at its core.
 
-The stack is deployed and operated through its companion IaC and prompt-cache
+The stack is deployed and operated through its companion IaC and prompt-library
 repositories (see [Companion repositories](#companion-repositories)).
 
 ## What this repository is
@@ -247,10 +247,11 @@ repositories:
   (`noesispraxis_enable_agency_profiles: true`). Local reference:
   `~/projects/noesis-ansible`.
 
-- **[Noesis Prompt Cache](https://github.com/HashGrid-Networks/noesis-prompt-cache)**
-  — the shared prompt-cache and reference prompt set used by the fleet for
+- **[Noesis Prompt Library](https://github.com/HashGrid-Networks/noesis-prompt-library)**
+  — the shared prompt library and reference prompt set used by the fleet for
   complex agent goals and deployment prompts (ACP/A2A/MCP registries, Telegram,
-  OpenClaw, ClawDev/HermesDev). Local reference: `~/projects/hermes-prompt-cache`.
+  OpenClaw, ClawDev/HermesDev). Renamed from the former `noesis-prompt-cache`,
+  which is superseded.
 
 ## Safety model
 
