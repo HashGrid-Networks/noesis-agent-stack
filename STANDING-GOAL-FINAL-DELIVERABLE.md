@@ -245,6 +245,7 @@ remove 6 ADD; verified procedure, HEAD stays `c5733167…`).
 | 7 | Runtime fencing / mTLS | Infrastructure change, approval-gated |
 | 8 | Planner qualification review (NOESIS-LOOP-GRAPH-V1) | Operator hand-carry of `workspace/loop-graph-slice/sentinel-request.md`, then `skeptic-request.md` after PASS (exact snapshot `f2127745…`) |
 | 9 | Lease-lifecycle implementation | Approval of design `workspace/loop-graph-slice/LEASE-LIFECYCLE-DESIGN.md` (queued second) |
+| 10 | HARDENING-1 implementation | Operator decision received (opt-in via `expected_candidate_digest`); 2/2 `noesis-forge` attempts on the authorized `nous/kimi-k2.7-code` lane returned SIGINT (exit 130) at ~610s awaiting model response with no output and no workspace mutation; halted with a single route blocker per bounded-retry rule. Logs `~/.hermes/profiles/noesis-orchestrator/cache/hardening1-forge-{1,2}.log`. Workspace clean at `553a06bdbc8d9dfc3e451f15adf67151be27b6f6`. Operator choice required: (a) authorize a provider-lane switch and reload attempt budget, (b) revert to design-only delivery, or (c) hand-carry the implementation in the operator's own `noesis-forge` context. |
 
 ---
 
