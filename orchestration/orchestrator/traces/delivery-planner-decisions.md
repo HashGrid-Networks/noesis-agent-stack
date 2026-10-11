@@ -66,5 +66,9 @@ held        : orchestrator_accept — even with both reviews green, the
 Fixed dispositions: `next_action_proposal`, `wait_for_existing_attempt`,
 `blocked_on_evidence`, `blocked_on_review`, `blocked_on_authorization`,
 `completed_within_scope`. Unknown task, missing candidate, malformed
-authority data, expired lease, contradicting reviews — all resolve to a
-blocked disposition with citations, never to a dispatch proposal.
+authority data, expired/revoked lease, non-boolean `approval_required`,
+contradicting reviews — all resolve to a blocked disposition with citations,
+never to a dispatch proposal. A missing task cites the ledger (`record=missing`)
+rather than returning zero references. Replay refuses non-boolean `accepted` /
+`lease.revoked` instead of `bool()`-coercing them. No-progress requires the
+same task version as well as disposition/action/candidate/reason.

@@ -115,6 +115,13 @@ class DeliveryPlanner:
                 disposition=PlannerDisposition.blocked_on_evidence,
                 proposed_action=None,
                 reason="task not present in the authoritative delegation ledger",
+                source_references=(
+                    SourceReference(
+                        source_artifact=self._store.ledger_path.name,
+                        record="missing",
+                        detail={"task_id": task_id, "present": False},
+                    ),
+                ),
             )
 
         candidate = task.candidate_revision
@@ -123,7 +130,7 @@ class DeliveryPlanner:
         ]
 
         # 0. Completed within scope.
-        if task.state is TaskState.completed and task.accepted:
+        if task.state is TaskState.completed and task.accepted is True:
             refs.append(self._ref(task, "accepted"))
             return self._finish(task, candidate, PlannerDisposition.completed_within_scope,
                                 None, "accepted within recorded scope", refs, previous)
@@ -164,6 +171,23 @@ class DeliveryPlanner:
                                 None,
                                 "no candidate revision submitted; nothing to review or accept",
                                 refs, previous)
+
+        # 4b. Expired/revoked authority cannot produce an action proposal.
+        if task.lease is not None and not task.lease.is_active:
+            refs.append(self._ref(
+                task, "lease",
+                holder=task.lease.holder,
+                epoch=task.lease.epoch,
+                expires_at=task.lease.expires_at,
+                revoked=task.lease.revoked,
+                inactive=True,
+            ))
+            return self._finish(
+                task, candidate, PlannerDisposition.blocked_on_review,
+                None,
+                "lease expired or revoked; attempt is suspect; no action proposed",
+                refs, previous,
+            )
 
         # 5. Reviews on the current candidate (scope-bound; stale rows listed).
         current = [r for r in task.reviews if r.candidate_revision == candidate]
@@ -225,8 +249,19 @@ class DeliveryPlanner:
 
         # 6. Authorization gate (planner never creates authorization).
         contract = task.contract or {}
+        raw_required = contract.get("approval_required")
         raw_grant = contract.get("approval_granted")
-        approval_required = contract.get("approval_required") is True
+        if "approval_required" in contract and not isinstance(raw_required, bool):
+            refs.append(self._ref(
+                task, "approval:required", malformed=True, value=raw_required,
+            ))
+            return self._finish(
+                task, candidate, PlannerDisposition.blocked_on_authorization,
+                None,
+                "approval_required is not a boolean; fail closed",
+                refs, previous,
+            )
+        approval_required = raw_required is True
         approval_granted = raw_grant is True
         if approval_required and not approval_granted:
             grant_malformed = raw_grant is not None and not isinstance(raw_grant, bool)
@@ -268,12 +303,19 @@ class DeliveryPlanner:
         refs: list[SourceReference],
         previous: PlannerDecision | None,
     ) -> PlannerDecision:
+        previous_version = None
+        if previous is not None:
+            for ref in previous.source_references:
+                if "task_version" in ref.detail:
+                    previous_version = ref.detail["task_version"]
+                    break
         no_progress = (
             previous is not None
             and previous.disposition is disposition
             and previous.proposed_action == proposed_action
             and previous.candidate_revision == candidate
             and previous.reason == reason
+            and previous_version == task.version
         )
         return PlannerDecision(
             task_id=task.task_id,

@@ -592,6 +592,15 @@ class DelegationStore:
         return task
 
 
+def _require_bool(value: Any, *, field: str) -> bool:
+    """Fail closed on non-bool authority flags; never bool()-coerce."""
+    if isinstance(value, bool):
+        return value
+    raise ActivationError(
+        f"{field} must be a boolean, got {type(value).__name__}"
+    )
+
+
 def _task_from_dict(data: dict[str, Any]) -> DelegatedTask:
     lease = None
     if data.get("lease"):
@@ -601,7 +610,7 @@ def _task_from_dict(data: dict[str, Any]) -> DelegatedTask:
             epoch=int(lease_data["epoch"]),
             issued_at=lease_data["issued_at"],
             expires_at=lease_data["expires_at"],
-            revoked=bool(lease_data.get("revoked", False)),
+            revoked=_require_bool(lease_data.get("revoked", False), field="lease.revoked"),
         )
     reviews = [Review(**r) for r in data.get("reviews") or []]
     return DelegatedTask(
@@ -620,7 +629,7 @@ def _task_from_dict(data: dict[str, Any]) -> DelegatedTask:
         candidate_revision=data.get("candidate_revision"),
         lease=lease,
         reviews=reviews,
-        accepted=bool(data.get("accepted", False)),
+        accepted=_require_bool(data.get("accepted", False), field="accepted"),
         last_event=data.get("last_event", ""),
         idempotency_key=data.get("idempotency_key"),
         budget_reserved=float(data.get("budget_reserved", 0.0)),

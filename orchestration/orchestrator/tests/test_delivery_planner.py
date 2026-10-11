@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, replace
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -15,8 +16,10 @@ import pytest
 from app.delegation import (
     ORCHESTRATOR_ID,
     PROTOCOL_VERSION,
+    ActivationError,
     DelegationStore,
     HandoffEnvelope,
+    Lease,
     MessageType,
     Review,
     TaskState,
@@ -345,9 +348,154 @@ def test_every_decision_carries_source_references(planner, store):
     scenarios["missing"] = planner.plan("nope")
 
     for name, decision in scenarios.items():
-        if name == "missing":
-            continue  # unknown task has no ledger to reference
         assert decision.source_references, f"{name} decision lacks source references"
         for ref in decision.source_references:
             assert ref.source_artifact == store.ledger_path.name
             assert ref.record
+
+
+# --------------------------------------------------------------------------
+# P1 fail-closed regressions (Sentinel 2026-10-11)
+# --------------------------------------------------------------------------
+
+_BLOCKED = {
+    PlannerDisposition.blocked_on_evidence,
+    PlannerDisposition.blocked_on_review,
+    PlannerDisposition.blocked_on_authorization,
+}
+
+
+def test_expired_or_revoked_authority_does_not_propose_action(planner, store):
+    """F1: expired/revoked authority never yields an action proposal."""
+    past = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+
+    _assign(store, "t-verify-expire")
+    _to_verifying(store, "t-verify-expire")
+    store.expire_lease("t-verify-expire")
+    d1a = planner.plan("t-verify-expire")
+    assert d1a.disposition in _BLOCKED
+    assert d1a.proposed_action is None
+
+    _assign(store, "t-running-cand")
+    store.mark_ready("t-running-cand", by=ORCHESTRATOR_ID)
+    store.start_running("t-running-cand", by="noesis-forge")
+    task = store.get("t-running-cand")
+    store._tasks["t-running-cand"] = replace(
+        task,
+        lease=Lease(
+            holder=task.lease.holder,
+            epoch=task.lease.epoch,
+            issued_at=task.lease.issued_at,
+            expires_at=past,
+            revoked=False,
+        ),
+        candidate_revision="cand-1",
+    )
+    d1c = planner.plan("t-running-cand")
+    assert d1c.disposition in _BLOCKED
+    assert d1c.proposed_action is None
+
+    _assign(store, "t-verify-revoked")
+    _to_verifying(store, "t-verify-revoked")
+    task = store.get("t-verify-revoked")
+    store._tasks["t-verify-revoked"] = replace(
+        task,
+        lease=Lease(
+            holder=task.lease.holder,
+            epoch=task.lease.epoch,
+            issued_at=task.lease.issued_at,
+            expires_at=task.lease.expires_at,
+            revoked=True,
+        ),
+    )
+    d1d = planner.plan("t-verify-revoked")
+    assert d1d.disposition in _BLOCKED
+    assert d1d.proposed_action is None
+
+
+def test_non_bool_approval_required_fails_closed(planner, store):
+    """F2: non-bool approval_required fails closed, never orchestrator_accept."""
+    for i, value in enumerate(("yes", 1, None, {"flag": True}, ["true"]), start=1):
+        tid = f"t-req-{i}"
+        _assign(store, tid, payload={"approval_required": value, "approval_granted": False})
+        _accept_ready(store, tid)
+        decision = planner.plan(tid)
+        assert decision.disposition is PlannerDisposition.blocked_on_authorization, value
+        assert decision.proposed_action is None, value
+        assert decision.disposition is not PlannerDisposition.next_action_proposal
+
+
+def test_replay_rejects_non_bool_accepted_and_revoked(tmp_path):
+    """F3: replay must not bool()-coerce malformed accepted/revoked flags."""
+    now = datetime.now(timezone.utc).isoformat()
+    past = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+
+    def _row(task_id: str, *, accepted, revoked, state: str = "completed") -> str:
+        task = {
+            "task_id": task_id,
+            "contract_revision": "rev-1",
+            "root_task_id": "root-1",
+            "correlation_id": "corr-1",
+            "assignee_profile": "noesis-forge",
+            "required_capability": "code_modify",
+            "intent": "x",
+            "acceptance_criteria": ["tests pass"],
+            "contract": {},
+            "state": state,
+            "version": 1,
+            "assignment_epoch": 1,
+            "candidate_revision": "cand-1",
+            "lease": {
+                "holder": "noesis-forge",
+                "epoch": 1,
+                "issued_at": now,
+                "expires_at": past if state == "running" else now,
+                "revoked": revoked,
+            },
+            "reviews": [],
+            "accepted": accepted,
+            "last_event": "injected",
+            "idempotency_key": f"idem-{task_id}",
+            "budget_reserved": 0.0,
+            "budget_consumed": 0.0,
+            "created_at": now,
+            "updated_at": now,
+        }
+        return json.dumps({"task": task})
+
+    assert bool("false") is True  # the coercion this test forbids
+
+    for task_id, extra in (
+        ("accepted_str_false", {"accepted": "false", "revoked": False, "state": "completed"}),
+        ("accepted_invalid", {"accepted": "invalid", "revoked": False, "state": "completed"}),
+        ("revoked_str_false", {"accepted": False, "revoked": "false", "state": "running"}),
+    ):
+        ledger = tmp_path / f"{task_id}.jsonl"
+        ledger.write_text(
+            _row(task_id, accepted=extra["accepted"], revoked=extra["revoked"], state=extra["state"])
+            + "\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(ActivationError, match="must be a boolean"):
+            DelegationStore(ledger)
+
+
+def test_no_progress_includes_task_version(planner, store):
+    """F4: same output/state but a different task.version is not no-progress."""
+    _assign(store, "t-ver")
+    first = planner.plan("t-ver")
+    task = store.get("t-ver")
+    store._tasks["t-ver"] = replace(task, version=task.version + 5)
+    second = planner.plan("t-ver", previous=first)
+    assert second.no_progress is False
+    assert second.disposition is not PlannerDisposition.completed_within_scope
+
+
+def test_missing_task_is_blocked_with_source_reference(planner, store):
+    """F5: a missing task fails closed with a ledger citation (n_refs != 0)."""
+    decision = planner.plan("missing")
+    assert decision.disposition is PlannerDisposition.blocked_on_evidence
+    assert decision.proposed_action is None
+    assert len(decision.source_references) >= 1
+    assert decision.source_references[0].record == "missing"
+    assert decision.source_references[0].detail["present"] is False
