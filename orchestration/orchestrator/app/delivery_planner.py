@@ -225,14 +225,19 @@ class DeliveryPlanner:
 
         # 6. Authorization gate (planner never creates authorization).
         contract = task.contract or {}
+        raw_grant = contract.get("approval_granted")
         approval_required = contract.get("approval_required") is True
-        approval_granted = contract.get("approval_granted") is True
+        approval_granted = raw_grant is True
         if approval_required and not approval_granted:
+            grant_malformed = raw_grant is not None and not isinstance(raw_grant, bool)
             refs.append(self._ref(
-                task, "approval:required",
-                malformed=not isinstance(contract.get("approval_granted"), bool)
-                and contract.get("approval_granted") is not None,
+                task, "approval:required", malformed=grant_malformed,
             ))
+            if raw_grant is not None:
+                refs.append(self._ref(
+                    task, "approval:granted", key="approval_granted",
+                    value=raw_grant, malformed=grant_malformed,
+                ))
             return self._finish(task, candidate, PlannerDisposition.blocked_on_authorization,
                                 None,
                                 "approval is required by contract and not granted; "
