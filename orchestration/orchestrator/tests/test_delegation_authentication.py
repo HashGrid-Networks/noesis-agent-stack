@@ -76,7 +76,7 @@ class TestSignedLifecycle:
         task = store.mark_ready(task.task_id, by="noesis-orchestrator")
         task = store.start_running(task.task_id, by="noesis-forge")
         task = store.submit_verifying(
-            task.task_id, by="noesis-forge", candidate_revision="rev-a"
+            task.task_id, by="noesis-forge", expected_attempt_epoch=1, candidate_revision="rev-a"
         )
         task = store.record_review(
             task.task_id,

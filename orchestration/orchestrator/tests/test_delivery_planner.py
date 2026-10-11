@@ -64,7 +64,7 @@ def planner(store: DelegationStore) -> DeliveryPlanner:
 def _to_verifying(store: DelegationStore, task_id: str, candidate: str = "cand-1") -> None:
     store.mark_ready(task_id, by=ORCHESTRATOR_ID)
     store.start_running(task_id, by="noesis-forge")
-    store.submit_verifying(task_id, by="noesis-forge", candidate_revision=candidate)
+    store.submit_verifying(task_id, by="noesis-forge", expected_attempt_epoch=1, candidate_revision=candidate)
 
 
 def _accept_ready(store: DelegationStore, task_id: str, candidate: str = "cand-1") -> None:
@@ -111,8 +111,22 @@ def test_deterministic_rebuild_and_duplicate_ingestion(tmp_path, planner, store)
 def test_candidate_change_does_not_inherit_review(planner, store):
     _assign(store, "t1")
     _accept_ready(store, "t1", candidate="cand-1")
-    # Remediation submits a new candidate; old reviews must not apply.
-    store.submit_verifying(store.get("t1").task_id, by="noesis-forge", candidate_revision="cand-2")
+    # Remediation requires an orchestrator grant; old reviews must not apply.
+    current = store.get("t1")
+    assert current is not None
+    granted = store.grant_new_attempt(
+        "t1",
+        by=ORCHESTRATOR_ID,
+        expected_task_version=current.version,
+        intended_candidate_revision="cand-2",
+    )
+    assert granted.lease is not None
+    store.submit_verifying(
+        store.get("t1").task_id,
+        by="noesis-forge",
+        expected_attempt_epoch=granted.lease.attempt_epoch,
+        candidate_revision="cand-2",
+    )
     decision = planner.plan("t1")
     assert decision.disposition is PlannerDisposition.next_action_proposal
     assert decision.proposed_action == "dispatch_spec_review"
@@ -306,7 +320,7 @@ def test_no_progress_detection(planner, store):
     # A planner-visible change (candidate submitted) resets the flag.
     store.mark_ready("t1", by=ORCHESTRATOR_ID)
     store.start_running("t1", by="noesis-forge")
-    store.submit_verifying("t1", by="noesis-forge", candidate_revision="cand-1")
+    store.submit_verifying("t1", by="noesis-forge", expected_attempt_epoch=1, candidate_revision="cand-1")
     third = planner.plan("t1", previous=second)
     assert third.no_progress is False
     assert third.disposition is PlannerDisposition.next_action_proposal
@@ -335,7 +349,7 @@ def test_every_decision_carries_source_references(planner, store):
     scenarios = {
         "wait": planner.plan("t1"),
     }
-    store.submit_verifying("t1", by="noesis-forge", candidate_revision="cand-1")
+    store.submit_verifying("t1", by="noesis-forge", expected_attempt_epoch=1, candidate_revision="cand-1")
     scenarios["spec_proposal"] = planner.plan("t1")
     store.record_review("t1", stage="spec", verdict="PASS", reviewer="noesis-sentinel",
                         candidate_revision="cand-1", findings=[])

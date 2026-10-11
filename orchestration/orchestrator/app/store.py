@@ -38,6 +38,15 @@ BREAKER_TRIP_EVENT = "circuit_breaker_tripped"
 BREAKER_RESET_EVENT = "circuit_breaker_reset"
 
 
+class TaskVersionConflict(RuntimeError):
+    """A TaskStore put presented a stale snapshot over a newer task version."""
+
+    def __init__(self, expected: int, actual: int) -> None:
+        super().__init__(f"task version conflict: expected {expected}, got {actual}")
+        self.expected = expected
+        self.actual = actual
+
+
 def _parse_dt(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -75,6 +84,8 @@ def _optional_released_at(raw: dict[str, Any]) -> datetime | None:
     parsed = _parse_dt(value)
     if parsed is None:
         raise ValueError("execution_released_at must be an ISO timestamp")
+    if parsed.tzinfo is None:
+        raise ValueError("execution_released_at must be timezone-aware")
     return parsed
 
 
@@ -255,6 +266,14 @@ class TaskStore:
         task.created_by = data["created_by"]
         task.updated_at = _parse_dt(data.get("updated_at"))
         task.terminal_reason = data.get("terminal_reason")
+        raw_version = data.get("task_version", 0)
+        if raw_version is None:
+            raw_version = 0
+        if type(raw_version) is not int:
+            raise ValueError(f"task_version must be an integer, got {type(raw_version).__name__}")
+        if raw_version < 0:
+            raise ValueError("task_version must be non-negative")
+        task.task_version = raw_version
         if claim_raw:
             task.claim = {
                 "claimed_by": claim_raw["claimed_by"],
@@ -349,15 +368,27 @@ class TaskStore:
 
     # ----------------------------------------------------------------- access
 
-    def put(self, task: TaskContract, event: str = "task_updated") -> TaskContract:
+    def put(self, task: TaskContract, event: str = "task_updated", *, expected_task_version: int | None = None) -> TaskContract:
         with self._exclusive_lock():
             if event == "task_proposed" and self.ledger_path.exists():
                 self.replay()
                 existing = self.find_by_idempotency_key(task.idempotency_key)
                 if existing is not None:
                     return existing
-            self._tasks[str(task.task_id)] = task
-            self._by_idempotency[task.idempotency_key] = str(task.task_id)
+            tid = str(task.task_id)
+            current = self._tasks.get(tid)
+            incoming = int(getattr(task, "task_version", 0) or 0)
+            if current is not None:
+                observed = int(getattr(current, "task_version", 0) or 0)
+                if expected_task_version is not None and expected_task_version != observed:
+                    raise TaskVersionConflict(expected_task_version, observed)
+                if incoming != observed:
+                    raise TaskVersionConflict(incoming, observed)
+                task.task_version = observed + 1
+            else:
+                task.task_version = incoming + 1
+            self._tasks[tid] = task
+            self._by_idempotency[task.idempotency_key] = tid
             self._append(event, task)
             return task
 

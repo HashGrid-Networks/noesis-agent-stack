@@ -88,7 +88,7 @@ def test_completed_requires_evidence_and_acceptance(tmp_path: Path) -> None:
     store.process(_assign_msg(task_id=task_id))
     store.mark_ready(task_id, by="noesis-orchestrator")
     store.start_running(task_id, by="noesis-forge")
-    store.submit_verifying(task_id, by="noesis-forge", candidate_revision="rev-1")
+    store.submit_verifying(task_id, by="noesis-forge", expected_attempt_epoch=1, candidate_revision="rev-1")
 
     # Reviews: spec PASS then quality APPROVE.
     store.record_review(task_id, stage="spec", verdict="PASS", reviewer="noesis-sentinel",
@@ -105,7 +105,7 @@ def test_quality_review_requires_spec_pass_on_current_revision(tmp_path: Path) -
     store.process(_assign_msg(task_id=task_id))
     store.mark_ready(task_id, by="noesis-orchestrator")
     store.start_running(task_id, by="noesis-forge")
-    store.submit_verifying(task_id, by="noesis-forge", candidate_revision="rev-1")
+    store.submit_verifying(task_id, by="noesis-forge", expected_attempt_epoch=1, candidate_revision="rev-1")
     # No spec PASS yet -> quality must be refused.
     with pytest.raises(ActivationError):
         store.record_review(task_id, stage="quality", verdict="APPROVED", reviewer="noesis-sentinel",

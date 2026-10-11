@@ -26,6 +26,7 @@ from app.lease_lifecycle import (
     LeaseTransitionError,
     extract_from_delegation,
     grant_lease,
+    grant_new_attempt,
     lease_renew,
     load_attempt_epoch,
     release_lease,
@@ -111,12 +112,13 @@ def test_monotonic_attempt_epoch_increments_on_start_running_and_rejects_stale_r
     lease = extract_from_delegation(task)
     assert lease.attempt_epoch == 1
 
-    second = start_running(lease, store=store)
+    second = grant_new_attempt(lease, store=store)
     assert second.attempt_epoch == 2
     assert second.state is LeaseState.held
     assert load_attempt_epoch(store, "t-epoch") == 2
 
-    third = start_running(second, store=store)
+    released = release_lease(second)
+    third = grant_new_attempt(released, store=store)
     assert third.attempt_epoch == 3
     assert load_attempt_epoch(store, "t-epoch") == 3
 
@@ -227,7 +229,7 @@ def _force_lease_wall_clock_expiry(store: DelegationStore, task_id: str) -> None
 def test_submit_verifying_releases_execution_and_persists_epoch(store: DelegationStore) -> None:
     task = _running_task(store, "t-release-prod")
     submitted = store.submit_verifying(
-        "t-release-prod", by="noesis-forge", candidate_revision="cand-1"
+        "t-release-prod", by="noesis-forge", expected_attempt_epoch=1, candidate_revision="cand-1"
     )
 
     assert submitted.state is TaskState.verifying
@@ -255,7 +257,7 @@ def test_submit_verifying_releases_execution_and_persists_epoch(store: Delegatio
 
 def test_stale_same_epoch_submit_after_release_fails(store: DelegationStore) -> None:
     _running_task(store, "t-stale-submit")
-    store.submit_verifying("t-stale-submit", by="noesis-forge", candidate_revision="cand-1")
+    store.submit_verifying("t-stale-submit", by="noesis-forge", expected_attempt_epoch=1, candidate_revision="cand-1")
     with pytest.raises(ActivationError, match="stale_attempt"):
         store.submit_verifying(
             "t-stale-submit",
@@ -267,13 +269,13 @@ def test_stale_same_epoch_submit_after_release_fails(store: DelegationStore) -> 
 
 def test_revoked_worker_submit_and_action_fail(store: DelegationStore) -> None:
     _running_task(store, "t-revoked")
-    store.submit_verifying("t-revoked", by="noesis-forge", candidate_revision="cand-1")
+    store.submit_verifying("t-revoked", by="noesis-forge", expected_attempt_epoch=1, candidate_revision="cand-1")
     store.expire_lease("t-revoked")
     task = store.get("t-revoked")
     assert task is not None and task.lease is not None and task.lease.revoked
     assert task.state is TaskState.verifying
     with pytest.raises(ActivationError, match="revoked"):
-        store.submit_verifying("t-revoked", by="noesis-forge", candidate_revision="cand-2")
+        store.submit_verifying("t-revoked", by="noesis-forge", expected_attempt_epoch=1, candidate_revision="cand-2")
     with pytest.raises(ActivationError, match="revoked"):
         store.consume_budget("t-revoked", 0.0, by="noesis-forge")
     with pytest.raises(ActivationError, match="revoked|not held|released"):
@@ -284,7 +286,7 @@ def test_accept_after_execution_lease_expiry_without_reviving_permission(
     store: DelegationStore,
 ) -> None:
     _running_task(store, "t-accept-expired")
-    store.submit_verifying("t-accept-expired", by="noesis-forge", candidate_revision="cand-1")
+    store.submit_verifying("t-accept-expired", by="noesis-forge", expected_attempt_epoch=1, candidate_revision="cand-1")
     _reviews_to_accept(store, "t-accept-expired", "cand-1")
     _force_lease_wall_clock_expiry(store, "t-accept-expired")
 
@@ -307,7 +309,7 @@ def test_accept_rejects_stale_candidate_epoch_reviews_actor_and_version(
     store: DelegationStore,
 ) -> None:
     _running_task(store, "t-gates")
-    store.submit_verifying("t-gates", by="noesis-forge", candidate_revision="cand-1")
+    store.submit_verifying("t-gates", by="noesis-forge", expected_attempt_epoch=1, candidate_revision="cand-1")
     _reviews_to_accept(store, "t-gates", "cand-1")
     current = store.get("t-gates")
     assert current is not None
@@ -319,7 +321,21 @@ def test_accept_rejects_stale_candidate_epoch_reviews_actor_and_version(
     with pytest.raises(ActivationError, match="stale_attempt"):
         store.accept("t-gates", by=ORCHESTRATOR_ID, expected_attempt_epoch=99)
 
-    store.submit_verifying("t-gates", by="noesis-forge", candidate_revision="cand-2")
+    current = store.get("t-gates")
+    assert current is not None
+    granted = store.grant_new_attempt(
+        "t-gates",
+        by=ORCHESTRATOR_ID,
+        expected_task_version=current.version,
+        intended_assignee="noesis-forge",
+        intended_candidate_revision="cand-2",
+    )
+    store.submit_verifying(
+        "t-gates",
+        by="noesis-forge",
+        expected_attempt_epoch=granted.lease.attempt_epoch,
+        candidate_revision="cand-2",
+    )
     with pytest.raises(ActivationError, match="spec PASS|quality APPROVED"):
         store.accept("t-gates", by=ORCHESTRATOR_ID)
 
@@ -329,7 +345,7 @@ def test_restart_at_review_boundary_preserves_release_and_rejects_stale_worker(
 ) -> None:
     _running_task(store, "t-restart")
     submitted = store.submit_verifying(
-        "t-restart", by="noesis-forge", candidate_revision="cand-1"
+        "t-restart", by="noesis-forge", expected_attempt_epoch=1, candidate_revision="cand-1"
     )
     rebuilt = DelegationStore(store.ledger_path)
     again = rebuilt.get("t-restart")
@@ -349,10 +365,23 @@ def test_new_candidate_increments_epoch_and_invalidates_reviews(
     store: DelegationStore,
 ) -> None:
     _running_task(store, "t-new-cand")
-    first = store.submit_verifying("t-new-cand", by="noesis-forge", candidate_revision="cand-1")
+    first = store.submit_verifying("t-new-cand", by="noesis-forge", expected_attempt_epoch=1, candidate_revision="cand-1")
     first_epoch = first.lease.attempt_epoch if first.lease is not None else None
     _reviews_to_accept(store, "t-new-cand", "cand-1")
-    second = store.submit_verifying("t-new-cand", by="noesis-forge", candidate_revision="cand-2")
+    current = store.get("t-new-cand")
+    assert current is not None
+    granted = store.grant_new_attempt(
+        "t-new-cand",
+        by=ORCHESTRATOR_ID,
+        expected_task_version=current.version,
+        intended_candidate_revision="cand-2",
+    )
+    second = store.submit_verifying(
+        "t-new-cand",
+        by="noesis-forge",
+        expected_attempt_epoch=granted.lease.attempt_epoch,
+        candidate_revision="cand-2",
+    )
     assert second.lease is not None
     assert first_epoch == 1
     assert second.lease.attempt_epoch == first_epoch + 1
@@ -372,7 +401,7 @@ def test_malformed_persisted_epoch_and_release_fail_closed(tmp_path: Path) -> No
     ledger = tmp_path / "bad.jsonl"
     good = DelegationStore(ledger)
     _running_task(good, "t-malformed")
-    good.submit_verifying("t-malformed", by="noesis-forge", candidate_revision="cand-1")
+    good.submit_verifying("t-malformed", by="noesis-forge", expected_attempt_epoch=1, candidate_revision="cand-1")
     line = json.loads(ledger.read_text(encoding="utf-8").splitlines()[-1])
     line["task"]["lease"]["attempt_epoch"] = "not-an-int"
     ledger.write_text(json.dumps(line) + "\n", encoding="utf-8")
@@ -382,7 +411,7 @@ def test_malformed_persisted_epoch_and_release_fail_closed(tmp_path: Path) -> No
     ledger.write_text("", encoding="utf-8")
     good2 = DelegationStore(ledger)
     _running_task(good2, "t-malformed-ts")
-    good2.submit_verifying("t-malformed-ts", by="noesis-forge", candidate_revision="cand-1")
+    good2.submit_verifying("t-malformed-ts", by="noesis-forge", expected_attempt_epoch=1, candidate_revision="cand-1")
     line = json.loads(ledger.read_text(encoding="utf-8").splitlines()[-1])
     line["task"]["lease"]["execution_released_at"] = "not-a-timestamp"
     ledger.write_text(json.dumps(line) + "\n", encoding="utf-8")
@@ -396,7 +425,7 @@ def test_old_record_absent_fields_remain_unknown_and_keep_legacy_accept_gate(
     ledger = tmp_path / "legacy.jsonl"
     store = DelegationStore(ledger)
     task = _running_task(store, "t-legacy")
-    store.submit_verifying("t-legacy", by="noesis-forge", candidate_revision="cand-1")
+    store.submit_verifying("t-legacy", by="noesis-forge", expected_attempt_epoch=1, candidate_revision="cand-1")
     _reviews_to_accept(store, "t-legacy", "cand-1")
     line = json.loads(ledger.read_text(encoding="utf-8").splitlines()[-1])
     line["task"]["lease"].pop("attempt_epoch", None)
@@ -414,7 +443,7 @@ def test_old_record_absent_fields_remain_unknown_and_keep_legacy_accept_gate(
 
 def test_concurrent_accept_stale_version_loses(store: DelegationStore) -> None:
     _running_task(store, "t-concurrent")
-    store.submit_verifying("t-concurrent", by="noesis-forge", candidate_revision="cand-1")
+    store.submit_verifying("t-concurrent", by="noesis-forge", expected_attempt_epoch=1, candidate_revision="cand-1")
     _reviews_to_accept(store, "t-concurrent", "cand-1")
     current = store.get("t-concurrent")
     assert current is not None
@@ -432,7 +461,7 @@ def test_concurrent_accept_stale_version_loses(store: DelegationStore) -> None:
 
 def test_lease_renew_refused_during_review_and_after_release(store: DelegationStore) -> None:
     _running_task(store, "t-no-renew")
-    store.submit_verifying("t-no-renew", by="noesis-forge", candidate_revision="cand-1")
+    store.submit_verifying("t-no-renew", by="noesis-forge", expected_attempt_epoch=1, candidate_revision="cand-1")
     with pytest.raises(ActivationError, match="not held|released|review"):
         store.lease_renew("t-no-renew", duration=3600, expected_attempt_epoch=1, by="noesis-forge")
 
@@ -552,7 +581,19 @@ def test_control_plane_new_candidate_bumps_epoch(tmp_path: Path) -> None:
     first_epoch = first.delegation.attempt_epoch
     orch.record_review(task.task_id, stage="spec", verdict="PASS", reviewer="noesis-sentinel", candidate_revision="a")
     orch.record_review(task.task_id, stage="quality", verdict="APPROVED", reviewer="noesis-skeptic", candidate_revision="a")
-    second = orch.submit_candidate(task.task_id, candidate_revision="b")
+    live = orch.store.get(task.task_id)
+    assert live is not None
+    granted = orch.grant_new_attempt(
+        task.task_id,
+        expected_task_version=live.task_version,
+        intended_assignee="noesis-forge",
+        intended_candidate_revision="b",
+    )
+    second = orch.submit_candidate(
+        task.task_id,
+        candidate_revision="b",
+        attempt_epoch=granted.delegation.attempt_epoch,
+    )
     assert first_epoch == 1
     assert second.delegation.attempt_epoch == first_epoch + 1
     assert second.delegation.current_reviews("spec") == []

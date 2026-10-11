@@ -124,9 +124,11 @@ def _optional_released_at(data: dict[str, Any], *, field: str = "execution_relea
     if not isinstance(value, str) or not value.strip():
         raise ActivationError(f"{field} must be an ISO timestamp string")
     try:
-        datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError as exc:
         raise ActivationError(f"{field} must be an ISO timestamp") from exc
+    if parsed.tzinfo is None:
+        raise ActivationError(f"{field} must be timezone-aware")
     return value
 
 
@@ -134,6 +136,29 @@ def _replace_lease(lease: Lease, **changes: Any) -> Lease:
     payload = asdict(lease)
     payload.update(changes)
     return Lease(**payload)
+
+
+def _require_worker_epoch(
+    *,
+    current_epoch: int | None,
+    expected: int | None,
+    released: str | None,
+) -> None:
+    """Fail closed when persisted epoch authority exists and the worker omits or mismatches it.
+
+    Legacy records with neither attempt_epoch nor execution_released_at keep
+    absence as absence and do not invent a fence here.
+    """
+    if current_epoch is None and released is None:
+        if expected is not None:
+            raise ActivationError("stale_attempt_report: attempt_epoch mismatch")
+        return
+    if expected is None:
+        raise ActivationError("stale_attempt_report: attempt_epoch is required")
+    if current_epoch is None:
+        raise ActivationError("stale_attempt_report: legacy record has no epoch authority")
+    if current_epoch != expected:
+        raise ActivationError("stale_attempt_report: attempt_epoch mismatch")
 
 
 @dataclass
@@ -456,6 +481,7 @@ class DelegationStore:
         *,
         by: str,
         expected_task_version: int | None = None,
+        expected_attempt_epoch: int | None = None,
     ) -> DelegatedTask:
         """Record measured usage against the task's reservation. Assignee-only;
         consumption can never exceed what was reserved (unknown usage is not
@@ -466,8 +492,14 @@ class DelegationStore:
             raise ActivationError("only the assigned specialist consumes budget")
         if task.lease is not None and task.lease.revoked:
             raise ActivationError("execution authority revoked; worker action refused")
-        if task.lease is not None and task.lease.execution_released_at is not None:
-            raise ActivationError("stale_attempt_report: execution already released")
+        if task.lease is not None:
+            _require_worker_epoch(
+                current_epoch=task.lease.attempt_epoch,
+                expected=expected_attempt_epoch,
+                released=task.lease.execution_released_at,
+            )
+            if task.lease.execution_released_at is not None:
+                raise ActivationError("stale_attempt_report: execution already released")
         if amount < 0:
             raise ActivationError("consumption amount must be non-negative")
         with self._lock:
@@ -490,28 +522,93 @@ class DelegationStore:
         task.state = TaskState.ready
         return self._mutate(task, event="ready")
 
-    def start_running(self, task_id: str, *, by: str, expected_task_version: int | None = None) -> DelegatedTask:
+    def start_running(
+        self,
+        task_id: str,
+        *,
+        by: str,
+        expected_task_version: int | None = None,
+        expected_attempt_epoch: int | None = None,
+    ) -> DelegatedTask:
         task = self._require(task_id)
         self._check_version(task, expected_task_version)
         if by != task.assignee_profile:
             raise ActivationError("only the assigned specialist may start execution")
+        if task.lease is not None and task.lease.revoked:
+            raise ActivationError("lease expired or revoked; cannot start execution")
+        if task.lease is not None and task.lease.execution_released_at is not None:
+            raise ActivationError("stale_attempt_report: execution already released")
         if task.state not in {TaskState.ready, TaskState.running}:
             raise ActivationError(f"task {task_id} is {task.state}, not ready")
-        if task.lease is not None and (task.lease.revoked or not task.lease.is_active):
-            raise ActivationError("lease expired or revoked; cannot start execution")
-        next_epoch = 1
         if task.lease is not None and task.lease.attempt_epoch is not None:
-            next_epoch = task.lease.attempt_epoch + 1
+            _require_worker_epoch(
+                current_epoch=task.lease.attempt_epoch,
+                expected=expected_attempt_epoch,
+                released=task.lease.execution_released_at,
+            )
+            if not task.lease.is_active:
+                raise ActivationError("lease expired or revoked; cannot start execution")
+            task.state = TaskState.running
+            return self._mutate(task, event="started")
+        if task.lease is not None and not task.lease.is_active:
+            raise ActivationError("lease expired or revoked; cannot start execution")
         task.lease = Lease(
             holder=by,
             epoch=task.assignment_epoch,
             issued_at=_utcnow(),
             expires_at=_lease_expiry(),
-            attempt_epoch=next_epoch,
+            attempt_epoch=1,
             execution_released_at=None,
         )
         task.state = TaskState.running
         return self._mutate(task, event="started")
+
+    def grant_new_attempt(
+        self,
+        task_id: str,
+        *,
+        by: str,
+        expected_task_version: int,
+        intended_assignee: str | None = None,
+        intended_candidate_revision: str | None = None,
+    ) -> DelegatedTask:
+        """Orchestrator-controlled new attempt. Increments attempt_epoch.
+
+        `by` is an in-process caller label compared to ORCHESTRATOR_ID; it is
+        not authentication. Production must not expose this method to
+        untrusted callers.
+        """
+        task = self._require(task_id)
+        self._check_version(task, expected_task_version)
+        if by != ORCHESTRATOR_ID:
+            raise ActivationError("only the orchestrator grants a new attempt")
+        if intended_assignee is not None and intended_assignee != task.assignee_profile:
+            raise ActivationError("intended assignee does not match task assignee")
+        if task.lease is not None and task.lease.revoked:
+            raise ActivationError("execution authority revoked; cannot grant a new attempt")
+        if task.state not in {
+            TaskState.running,
+            TaskState.verifying,
+            TaskState.spec_review,
+            TaskState.quality_review,
+        }:
+            raise ActivationError(f"task {task_id} is {task.state}; cannot grant a new attempt")
+        current_epoch = task.lease.attempt_epoch if task.lease is not None else None
+        next_epoch = (current_epoch or 0) + 1
+        task.lease = Lease(
+            holder=task.assignee_profile,
+            epoch=task.assignment_epoch,
+            issued_at=_utcnow(),
+            expires_at=_lease_expiry(),
+            attempt_epoch=next_epoch,
+            execution_released_at=None,
+            revoked=False,
+        )
+        task.reviews = []
+        if intended_candidate_revision is not None:
+            task.candidate_revision = intended_candidate_revision
+        task.state = TaskState.running
+        return self._mutate(task, event="new_attempt_granted")
 
     def submit_verifying(
         self,
@@ -530,11 +627,13 @@ class DelegationStore:
             raise ActivationError("execution authority revoked; worker action refused")
         current_epoch = task.lease.attempt_epoch if task.lease is not None else None
         released = task.lease.execution_released_at if task.lease is not None else None
-        if expected_attempt_epoch is not None:
-            if current_epoch != expected_attempt_epoch:
-                raise ActivationError("stale_attempt_report: attempt_epoch mismatch")
-            if released is not None and task.candidate_revision != candidate_revision:
-                raise ActivationError("stale_attempt_report: execution already released for this epoch")
+        _require_worker_epoch(
+            current_epoch=current_epoch,
+            expected=expected_attempt_epoch,
+            released=released,
+        )
+        if released is not None and task.candidate_revision != candidate_revision:
+            raise ActivationError("stale_attempt_report: execution already released for this epoch")
         # Duplicate RESULT for the same candidate revision is idempotent.
         if task.state is TaskState.verifying and task.candidate_revision == candidate_revision:
             return task
@@ -546,8 +645,6 @@ class DelegationStore:
         if task.candidate_revision != candidate_revision:
             task.reviews = [r for r in task.reviews if r.candidate_revision == candidate_revision]
         next_epoch = current_epoch if current_epoch is not None else 1
-        if released is not None and task.candidate_revision != candidate_revision:
-            next_epoch = (current_epoch or 0) + 1
         task.candidate_revision = candidate_revision
         task.state = TaskState.verifying
         if task.lease is not None:

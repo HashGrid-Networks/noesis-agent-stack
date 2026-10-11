@@ -112,8 +112,8 @@ class TestDeduplication:
 
     def test_agent_role_deduplicated_across_tasks(self, tmp_path: Path):
         store = TaskStore(tmp_path / "tasks.jsonl")
-        store.put(_make_task(title="t1", assignee="noesis-forge"))
-        store.put(_make_task(title="t2", assignee="noesis-forge"))
+        store.put(_make_task(title="t1", assignee="noesis-forge", task_id=UUID("00000000-0000-0000-0000-000000000001")))
+        store.put(_make_task(title="t2", assignee="noesis-forge", task_id=UUID("00000000-0000-0000-0000-000000000002")))
         g = GraphProjection.from_stores(store)
         forge_agents = [
             e
@@ -216,7 +216,11 @@ class TestSupersession:
         assert len(auths_v1) == 1
 
         # New task (different task_id, no approval) must have no authorizations
-        task_v2 = _make_task(title="updated", approval=None)
+        task_v2 = _make_task(
+            title="updated",
+            approval=None,
+            task_id=UUID("00000000-0000-0000-0000-000000000002"),
+        )
         store.put(task_v2)
         g2 = GraphProjection.from_stores(store)
         auths_v2 = g2.approved_bytes(_det_hash("task", str(task_v2.task_id)))

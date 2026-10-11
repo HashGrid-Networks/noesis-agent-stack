@@ -21,6 +21,7 @@ from app.delegation import (
     HandoffEnvelope,
     MessageType,
     TaskState,
+    ORCHESTRATOR_ID,
 )
 
 
@@ -59,7 +60,7 @@ def _assign(*, task_id: str, sender: str = "noesis-orchestrator", epoch: int = 1
 def _to_verifying(store: DelegationStore, task_id: str, *, rev: str = "rev-1") -> None:
     store.mark_ready(task_id, by="noesis-orchestrator")
     store.start_running(task_id, by="noesis-forge")
-    store.submit_verifying(task_id, by="noesis-forge", candidate_revision=rev)
+    store.submit_verifying(task_id, by="noesis-forge", expected_attempt_epoch=1, candidate_revision=rev)
 
 
 def _to_quality(store: DelegationStore, task_id: str, *, rev: str = "rev-1") -> None:
@@ -92,8 +93,8 @@ def test_duplicate_result_same_revision_is_idempotent(tmp_path: Path) -> None:
     store.process(_assign(task_id=task_id))
     store.mark_ready(task_id, by="noesis-orchestrator")
     store.start_running(task_id, by="noesis-forge")
-    first = store.submit_verifying(task_id, by="noesis-forge", candidate_revision="rev-1")
-    second = store.submit_verifying(task_id, by="noesis-forge", candidate_revision="rev-1")
+    first = store.submit_verifying(task_id, by="noesis-forge", expected_attempt_epoch=1, candidate_revision="rev-1")
+    second = store.submit_verifying(task_id, by="noesis-forge", expected_attempt_epoch=1, candidate_revision="rev-1")
 
     assert second.state is TaskState.verifying
     assert second.candidate_revision == "rev-1"
@@ -109,9 +110,20 @@ def test_candidate_change_invalidates_prior_reviews(tmp_path: Path) -> None:
     store.record_review(task_id, stage="quality", verdict="APPROVED", reviewer="noesis-sentinel",
                         candidate_revision="rev-1", findings=[])
 
-    # A new candidate revision is submitted after reviews -> old reviews must be
-    # invalidated so quality on rev-2 cannot reuse the rev-1 spec PASS.
-    store.submit_verifying(task_id, by="noesis-forge", candidate_revision="rev-2")
+    # A new candidate revision is submitted after an orchestrator grant.
+    current = store.get(task_id)
+    granted = store.grant_new_attempt(
+        task_id,
+        by=ORCHESTRATOR_ID,
+        expected_task_version=current.version,
+        intended_candidate_revision="rev-2",
+    )
+    store.submit_verifying(
+        task_id,
+        by="noesis-forge",
+        expected_attempt_epoch=granted.lease.attempt_epoch,
+        candidate_revision="rev-2",
+    )
     task = store.get(task_id)
     assert all(r.candidate_revision == "rev-2" for r in task.reviews)
     assert task.reviews == []
@@ -214,7 +226,7 @@ def test_assignee_cannot_review_its_own_result_regardless_of_profile(tmp_path: P
     store.process(replace(assign, recipient_id="noesis-substrate"))
     store.mark_ready(tid, by="noesis-orchestrator")
     store.start_running(tid, by="noesis-substrate")
-    store.submit_verifying(tid, by="noesis-substrate", candidate_revision="rev-1")
+    store.submit_verifying(tid, by="noesis-substrate", expected_attempt_epoch=1, candidate_revision="rev-1")
 
     with pytest.raises(ActivationError, match="cannot review its own work"):
         store.record_review(
@@ -243,7 +255,7 @@ def test_restart_between_every_transition_preserves_lifecycle(tmp_path: Path) ->
     assert store.get(tid).state is TaskState.running
     assert store.get(tid).lease is not None and store.get(tid).lease.is_active
 
-    store.submit_verifying(tid, by="noesis-forge", candidate_revision="rev-1")
+    store.submit_verifying(tid, by="noesis-forge", expected_attempt_epoch=1, candidate_revision="rev-1")
     store = DelegationStore(ledger)
     assert store.get(tid).state is TaskState.verifying
 
@@ -331,7 +343,7 @@ def test_cancel_persisted_before_termination_confirmation_blocks_all_work(tmp_pa
     with pytest.raises(ActivationError):
         store.start_running(tid, by="noesis-forge")
     with pytest.raises(ActivationError):
-        store.submit_verifying(tid, by="noesis-forge", candidate_revision="rev-1")
+        store.submit_verifying(tid, by="noesis-forge", expected_attempt_epoch=1, candidate_revision="rev-1")
     with pytest.raises(ActivationError):
         store.record_review(tid, stage="spec", verdict="PASS", reviewer="noesis-sentinel",
                             candidate_revision="rev-1", findings=[])

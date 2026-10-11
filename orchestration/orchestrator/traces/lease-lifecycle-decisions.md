@@ -104,3 +104,21 @@ new attempt (epoch++). Acceptance after release does not require wall-clock
 lease liveness; old records with absent fields keep the legacy lease gate.
 `lease_renew` is version-fenced, persisted via `_mutate`, and refused after
 release/revocation or during review. `_require_bool` replay remains.
+
+## r2 authority fence (2026-10-11)
+
+Design: LEASE-LIFECYCLE-DESIGN.md I1–I5; Sentinel r2 R2-F1, R2-F2, R2-N1–N3.
+Path: `DelegationStore.grant_new_attempt` / `start_running` / `submit_verifying` /
+`consume_budget`; `Orchestrator.grant_new_attempt` / `submit_candidate` /
+`observe_budget` / `accept`; `TaskStore.put` compare-and-swap on `task_version`.
+Decision: worker actions that depend on persisted execution authority must
+present the current `attempt_epoch`; omission fails closed. A different
+candidate revision or digest never increments the epoch. The only persisted
+transition that mints a new attempt is orchestrator `grant_new_attempt`,
+bound to the observed task version and intended assignee/candidate.
+`execution_released_at` is one-way: review non-pass and `start_running` cannot
+clear it. `TaskStore.put` refuses a stale snapshot over a newer
+`task_version`. Timezone-naive `execution_released_at` fails closed on replay.
+`operator == "noesis-orchestrator"` remains an in-process caller-label
+prerequisite, not authentication. Production must not expose `accept` or
+`grant_new_attempt` to untrusted callers.

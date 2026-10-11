@@ -249,8 +249,17 @@ class TestDelegationLifecycleOnAuthoritativeLedger:
                            reviewer="noesis-sentinel", candidate_revision="a")
         orch.record_review(task2.task_id, stage="quality", verdict="APPROVED",
                            reviewer="noesis-skeptic", candidate_revision="a")
-        # Remediation changes the candidate while in awaiting_review.
-        orch.submit_candidate(task2.task_id, candidate_revision="b")
+        live = orch.store.get(task2.task_id)
+        granted = orch.grant_new_attempt(
+            task2.task_id,
+            expected_task_version=live.task_version,
+            intended_candidate_revision="b",
+        )
+        orch.submit_candidate(
+            task2.task_id,
+            candidate_revision="b",
+            attempt_epoch=granted.delegation.attempt_epoch,
+        )
         task2 = orch.store.get(task2.task_id)
         assert task2.delegation.candidate_revision == "b"
         assert task2.delegation.current_reviews("spec") == []

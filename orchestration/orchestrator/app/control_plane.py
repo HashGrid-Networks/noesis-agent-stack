@@ -60,6 +60,7 @@ from app.store import (
     BREAKER_TRIP_EVENT,
     DEFAULT_LEDGER,
     TaskStore,
+    TaskVersionConflict,
 )
 
 # Consecutive failures within one correlation graph before dispatch is halted.
@@ -868,7 +869,10 @@ class Orchestrator:
 
         A candidate change automatically invalidates reviews bound to an older
         revision, so an approval can never apply to a stale diff. Submission
-        releases execution ownership for the current attempt_epoch.
+        releases execution ownership for the current attempt_epoch. A different
+        revision or digest never mints a new attempt; only grant_new_attempt
+        increments attempt_epoch. attempt_epoch is required when a persisted
+        epoch or release is present (omission fails closed).
         """
         task = self._require(task_id)
         if task.delegation.execution_revoked:
@@ -888,7 +892,18 @@ class Orchestrator:
         digest_changed = prior_revision is not None and prior_digest != candidate_digest
         current_epoch = task.delegation.attempt_epoch
         released = task.delegation.execution_released_at
-        if attempt_epoch is not None:
+        if current_epoch is None and released is None:
+            if attempt_epoch is not None:
+                raise PolicyViolation(
+                    "stale_attempt_report",
+                    "attempt_epoch mismatch",
+                )
+        else:
+            if attempt_epoch is None:
+                raise PolicyViolation(
+                    "stale_attempt_report",
+                    "attempt_epoch is required",
+                )
             if current_epoch != attempt_epoch:
                 raise PolicyViolation(
                     "stale_attempt_report",
@@ -901,8 +916,6 @@ class Orchestrator:
                 )
         if current_epoch is None:
             task.delegation.attempt_epoch = 1
-        elif (revision_changed or digest_changed) and released is not None and attempt_epoch is None:
-            task.delegation.attempt_epoch = current_epoch + 1
         if revision_changed or digest_changed:
             task.delegation.reviews = [] if digest_changed else [
                 r
@@ -913,12 +926,64 @@ class Orchestrator:
         task.delegation.candidate_digest = candidate_digest
         if task.delegation.execution_released_at is None:
             task.delegation.execution_released_at = utcnow()
-        elif revision_changed or digest_changed:
-            task.delegation.execution_released_at = utcnow()
         next_state = "awaiting_review" if task.reviewer_profile else "running"
         if task.state != next_state:
             task.transition_to(next_state)
-        return self.store.put(task, event="candidate_submitted")
+        try:
+            return self.store.put(
+                task, event="candidate_submitted", expected_task_version=task.task_version
+            )
+        except TaskVersionConflict as exc:
+            raise PolicyViolation("task_version_conflict", str(exc)) from exc
+
+    def grant_new_attempt(
+        self,
+        task_id: str | UUID,
+        *,
+        operator: str = "noesis-orchestrator",
+        expected_task_version: int,
+        intended_assignee: str | None = None,
+        intended_candidate_revision: str | None = None,
+    ) -> TaskContract:
+        """Orchestrator-controlled new attempt. Increments attempt_epoch.
+
+        `operator` is an in-process caller label compared to the allowlisted
+        string "noesis-orchestrator". It is not authentication. Production
+        must not expose this method to untrusted callers.
+        """
+        task = self._require(task_id)
+        if operator != "noesis-orchestrator":
+            raise PolicyViolation("unauthorized_actor", "only the orchestrator grants a new attempt")
+        if expected_task_version != task.task_version:
+            raise PolicyViolation(
+                "task_version_conflict",
+                f"expected {expected_task_version}, got {task.task_version}",
+            )
+        if intended_assignee is not None and intended_assignee != task.assignee_profile:
+            raise PolicyViolation("assignee_mismatch", "intended assignee does not match task assignee")
+        if task.delegation.execution_revoked:
+            raise PolicyViolation(
+                "execution_revoked",
+                "revoked execution authority cannot be re-granted",
+            )
+        if task.state not in ("running", "awaiting_review"):
+            raise PolicyViolation(
+                "not_grantable",
+                f"task is '{task.state}', cannot grant a new attempt",
+            )
+        current = task.delegation.attempt_epoch or 0
+        task.delegation.attempt_epoch = current + 1
+        task.delegation.execution_released_at = None
+        task.delegation.reviews = []
+        if intended_candidate_revision is not None:
+            task.delegation.candidate_revision = intended_candidate_revision
+            task.delegation.candidate_digest = None
+        try:
+            return self.store.put(
+                task, event="new_attempt_granted", expected_task_version=expected_task_version
+            )
+        except TaskVersionConflict as exc:
+            raise PolicyViolation("task_version_conflict", str(exc)) from exc
 
     def record_review(
         self,
@@ -974,20 +1039,55 @@ class Orchestrator:
         if dup:
             task.delegation.reviews.remove(dup[-1])
         task.delegation.reviews.append(rec)
-        return self.store.put(task, event=f"review_{stage}")
+        try:
+            return self.store.put(task, event=f"review_{stage}", expected_task_version=task.task_version)
+        except TaskVersionConflict as exc:
+            raise PolicyViolation("task_version_conflict", str(exc)) from exc
 
-    def observe_budget(self, task_id: str | UUID, *, requests: int = 0, tokens: int | None = None) -> TaskContract:
+    def observe_budget(
+        self,
+        task_id: str | UUID,
+        *,
+        requests: int = 0,
+        tokens: int | None = None,
+        attempt_epoch: int | None = None,
+    ) -> TaskContract:
         """Accumulate measured token/request usage on the authoritative task.
 
         Unknown usage is tracked as ``None`` (never 0). This is an honest,
         minimal accounting control; it does not claim provider-level financial
-        enforcement the runtime cannot supply.
+        enforcement the runtime cannot supply. After a persisted attempt_epoch
+        or execution_released_at, the current epoch is mandatory and released
+        attempts are refused.
         """
         task = self._require(task_id)
+        if task.delegation.execution_revoked:
+            raise PolicyViolation(
+                "execution_revoked",
+                "revoked execution authority cannot observe budget",
+            )
+        current_epoch = task.delegation.attempt_epoch
+        released = task.delegation.execution_released_at
+        if current_epoch is not None or released is not None:
+            if attempt_epoch is None:
+                raise PolicyViolation("stale_attempt_report", "attempt_epoch is required")
+            if current_epoch != attempt_epoch:
+                raise PolicyViolation(
+                    "stale_attempt_report",
+                    f"attempt_epoch {attempt_epoch} != current {current_epoch}",
+                )
+            if released is not None:
+                raise PolicyViolation(
+                    "stale_attempt_report",
+                    "execution already released",
+                )
         task.delegation.requests_used += int(requests)
         if tokens is not None:
             task.delegation.tokens_used = (task.delegation.tokens_used or 0) + int(tokens)
-        return self.store.put(task, event="budget_observed")
+        try:
+            return self.store.put(task, event="budget_observed", expected_task_version=task.task_version)
+        except TaskVersionConflict as exc:
+            raise PolicyViolation("task_version_conflict", str(exc)) from exc
 
     def accept(self, task_id: str | UUID, *, operator: str = "noesis-orchestrator") -> TaskContract:
         """Explicit orchestrator acceptance. Backend success is never acceptance.
@@ -997,6 +1097,10 @@ class Orchestrator:
         no open critical/important findings remain, execution has been released
         (or a legacy unreleased record still has a live claim lease), and the
         shared budget is not exceeded.
+
+        `operator` is an in-process caller label compared to the allowlisted
+        string "noesis-orchestrator". It is not authentication or proof of
+        identity. Production must not expose accept() to untrusted callers.
         """
         task = self._require(task_id)
         if operator != "noesis-orchestrator":
@@ -1034,8 +1138,12 @@ class Orchestrator:
         task.delegation.accepted_by = operator
         task.delegation.accepted_at = utcnow()
         task.transition_to("succeeded")
+        try:
+            stored = self.store.put(task, event="task_accepted", expected_task_version=task.task_version)
+        except TaskVersionConflict as exc:
+            raise PolicyViolation("task_version_conflict", str(exc)) from exc
         self.breaker.record_success()
-        return self.store.put(task, event="task_accepted")
+        return stored
 
     def emit_delegation_projection(self, projection_path: Path | str) -> list[dict[str, Any]]:
         """Write noesis.delegated-task/v1 event-log records derived from the ledger.

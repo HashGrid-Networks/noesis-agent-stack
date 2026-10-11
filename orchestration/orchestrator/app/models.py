@@ -269,6 +269,8 @@ class TaskContract:
     updated_at: datetime | None = None
     terminal_reason: str | None = None
     delegation: Delegation = field(default_factory=Delegation)
+    # Compare-and-swap fence for TaskStore.put. Absent on legacy records (0).
+    task_version: int = 0
 
     def __post_init__(self) -> None:
         if self.risk_tier not in RISK_TIERS:

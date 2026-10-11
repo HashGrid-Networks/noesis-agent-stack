@@ -253,6 +253,11 @@
         "cancelled"
       ]
     },
+    "task_version": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Compare-and-swap fence incremented on every TaskStore.put. Absent on legacy records and treated as 0. Not an authentication token."
+    },
     "handoff": {
       "type": [
         "object",
@@ -534,7 +539,7 @@
             "null"
           ],
           "format": "date-time",
-          "description": "Wall-clock instant execution ownership was released at candidate submission. Null means unknown/unreleased."
+          "description": "Timezone-aware instant execution ownership was released at candidate submission. Null means unknown/unreleased. Naive timestamps fail closed on replay."
         },
         "execution_revoked": {
           "type": "boolean",

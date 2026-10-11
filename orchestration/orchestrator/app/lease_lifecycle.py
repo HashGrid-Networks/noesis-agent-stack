@@ -27,7 +27,8 @@ class LeaseState(StrEnum):
 
 
 # Fail-closed table. held -> held is not a transition; start_running while
-# already held bumps attempt_epoch in place (one active attempt, new epoch).
+# already held resumes without minting a new attempt_epoch. grant_new_attempt
+# is the only transition that increments epoch after release.
 ALLOWED_TRANSITIONS: dict[LeaseState, frozenset[LeaseState]] = {
     LeaseState.requested: frozenset({LeaseState.granted, LeaseState.revoked}),
     LeaseState.granted: frozenset({LeaseState.held, LeaseState.expired, LeaseState.revoked}),
@@ -206,19 +207,53 @@ def start_running(
     so only one active attempt exists (I2). Persists attempt_epoch when a
     DelegationStore is supplied.
     """
+    if lease.state is LeaseState.released:
+        raise LeaseTransitionError(
+            "fail-closed: released lease cannot start_running; grant_new_attempt required"
+        )
     seconds = _duration_seconds(duration)
     now = _now()
     if lease.state is LeaseState.held:
         next_lease = replace(
             lease,
-            attempt_epoch=lease.attempt_epoch + 1,
             issued_at=now,
             expires_at=now + timedelta(seconds=seconds),
-            execution_released_at=None,
         )
         _persist(store, next_lease)
         return next_lease
     moved = _transition(lease, LeaseState.held)
+    next_lease = replace(
+        moved,
+        attempt_epoch=lease.attempt_epoch + 1,
+        issued_at=now,
+        expires_at=now + timedelta(seconds=seconds),
+        execution_released_at=None,
+        revoked=False,
+    )
+    _persist(store, next_lease)
+    return next_lease
+
+
+def grant_new_attempt(
+    lease: Lease,
+    *,
+    duration: int | float | timedelta = 1800,
+    store: Any = None,
+) -> Lease:
+    """Orchestrator-controlled new attempt: increment epoch and re-enter held.
+
+    The only transition that mints a new attempt_epoch after release.
+    """
+    if lease.state not in {LeaseState.held, LeaseState.released}:
+        raise LeaseTransitionError(
+            f"fail-closed: cannot grant a new attempt from {lease.state}"
+        )
+    seconds = _duration_seconds(duration)
+    now = _now()
+    if lease.state is LeaseState.released:
+        moved = _transition(lease, LeaseState.held)
+    else:
+        moved = lease
     next_lease = replace(
         moved,
         attempt_epoch=lease.attempt_epoch + 1,

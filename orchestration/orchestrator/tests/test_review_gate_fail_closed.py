@@ -196,7 +196,18 @@ def test_same_candidate_label_changed_digest_does_not_retain_approval(orch):
         candidate_revision="rev-1",
     )
 
-    orch.submit_candidate(task.task_id, candidate_revision="rev-1", candidate_digest="sha256:changed")
+    live = orch.store.get(task.task_id)
+    granted = orch.grant_new_attempt(
+        task.task_id,
+        expected_task_version=live.task_version,
+        intended_candidate_revision="rev-1",
+    )
+    orch.submit_candidate(
+        task.task_id,
+        candidate_revision="rev-1",
+        candidate_digest="sha256:changed",
+        attempt_epoch=granted.delegation.attempt_epoch,
+    )
 
     with pytest.raises(PolicyViolation, match="spec_review_required"):
         orch.accept(task.task_id)
