@@ -135,12 +135,17 @@ No network, no credentials, and no repository writes: every test uses a
 `tmp_path` ledger.
 
 **Timeout semantics (explicit):** wall-clock/claim expiry is not an immediate
-submit fence — denial relies on supervisor timeout processing
-(`sweep_timeouts`, default 60 s interval). Expire/revoke/cancel fence
-immediately; a post-expiry submit can succeed only until the next sweep
-observes the expiry, then fails closed. Workers cannot hold TaskStore
-authority; production entry is the Orchestrator, so worker-side expiry races
-are structurally excluded.
+submit fence — effective denial depends on the supervisor timeout-processing
+sweep (`sweep_timeouts`, nominal 60 s interval) **and on that sweep's actual
+operational health**: a missed sweep, scheduler delay, or supervisor outage
+extends the post-expiry acceptance window, so the interval is a nominal
+cadence, not a guaranteed bound. Expire/revoke/cancel fence immediately; a
+post-expiry submit can succeed only until the next healthy sweep observes the
+expiry, then fails closed. Detection of missed sweeps and supervisor failure
+is an explicit operations requirement of the deployment (see
+`DEPLOYMENT-RUNBOOK.md`). Workers cannot hold TaskStore authority; production
+entry is the Orchestrator, so worker-side expiry races are structurally
+excluded.
 
 ### Broker — OpenClaw worker control plane
 
@@ -160,7 +165,11 @@ authority.
 
 16 native specialists defined in `profiles/noesis-roster.yaml` (machine-readable
 source of truth) and `agents/noesis-*/` (`SOUL.md` + `agent.yaml`), mapped to
-Hermes profiles under `~/.hermes/profiles/<name>/`.
+Hermes profiles under `~/.hermes/profiles/<name>/`. These counts are
+deliberately distinct: **16** roster entries, **18** `agents/noesis-*`
+definitions, **17** live profile directories, and fewer still concurrently
+running — roster, definition, installation, and runtime are different layers
+and are never reported as one number.
 
 | Profile | Role | Tier | Notes |
 |---|---|---|---|
@@ -316,12 +325,15 @@ This system is designed around constrained autonomy.
 
 ## Status
 
-**Implemented and verified (2026-10-11):** the orchestrator control plane
-(`orchestration/orchestrator/`) runs **407 passing tests**, including the
-persisted-fold TaskStore with orchestrator-granted epochs and lease fencing,
-the delivery-loop planner, launcher attestation, correlated lifecycle event
-streams, and durable emergency stop. The broker control plane
-(`orchestration/broker/`) suite passes. Validators (inference-routing policy,
+**Implemented and verified at repository level (2026-10-11):** the
+orchestrator control plane (`orchestration/orchestrator/`) passes **407
+tests** — repository verification of the persisted-fold TaskStore with
+orchestrator-granted epochs and lease fencing, the delivery-loop planner,
+launcher attestation, correlated lifecycle event streams, and durable
+emergency stop. The 407-test run is **not** evidence of production
+operation; deployed behavior is demonstrated only by the phase-gated
+deployment below. The broker control plane (`orchestration/broker/`) suite
+passes. Validators (inference-routing policy,
 Honcho profile definitions, agency catalog names against the pinned upstream
 checkout, and live-config compliance via `scripts/verify_live_config.py`)
 pass. Evidence: `docs/operations/deployment-verification-2026-10-06.md` and
@@ -347,6 +359,16 @@ Ansible package, phase-gated (OS identities → authorized apply → offline
 validation → separately approved activation and bounded canary), with
 supervisor/operator procedures in `DEPLOYMENT-RUNBOOK.md`.
 
+**Production deployment state (2026-10-12):** apply is **partial** — the
+`noesis-authority` / `noesis-worker` OS identities exist (UIDs assigned by
+the OS), the four conflicting UID-501 prototype services were reversibly
+booted out and disabled (plists preserved, backup + `RESTORE.sh` intact),
+and no production service is active. **No launchd unit is installed, no
+service has been activated, and deployed behavior has not been
+demonstrated.** Activation and live canary remain held pending an approved
+envelope and cost ceiling. Rollback references: `DEPLOYMENT-RUNBOOK.md` and
+the prototype backup recorded under `docs/operations/`.
+
 **Governance:** every component carries independent review dispositions;
 no receipt approves itself, and no verdict constitutes installation,
 activation, canary, merge, or deployment approval. Those gates are operator
@@ -360,9 +382,12 @@ lane is exercised.
 
 ## Roadmap
 
-1. ~~Implement and accept the durable TaskStore admission authority~~ —
-   **done (2026-10-11):** persisted-fold `TaskStore` with epoch fencing,
-   qualified by independent Sentinel + Skeptic review.
+1. Durable TaskStore admission authority — **implemented and qualified at
+   repository level (2026-10-11):** persisted-fold `TaskStore` with epoch
+   fencing, independently reviewed (Sentinel + Skeptic PASS). This is an
+   operational requirement whose deployed behavior is **not yet validated**;
+   deployed validation remains part of the phase-gated rollout (item 2), and
+   completing the source implementation does not discharge it.
 2. Complete the phase-gated production deployment of the qualified release
    per `DEPLOYMENT-RUNBOOK.md` (apply → offline validation → activation).
 3. Bounded live canary under an approved envelope (provider route, request /
