@@ -35,8 +35,8 @@ orchestration engine that run the Noesis multi-agent system:
   [Orchestration engine](#orchestration-engine)).
 - The **in-house Noesis agent profiles** (`agents/noesis-*/`, `profiles/`) — the
   native specialist fleet (see [In-house Noesis fleet](#in-house-noesis-fleet)).
-- The **third-party "agency" profiles** (`agency/`, generated under
-  `agents/agency-*/`) — the advisory Tier A catalog fleet (see
+- The **third-party "agency" profiles** (`agency/`, materialized under
+  `~/.hermes/profiles/agency-*`) — the advisory Tier A catalog fleet (see
   [Third-party "agency" fleet](#third-party-agency-fleet)).
 - Shared policies, schemas, handoff contracts, routing state, and the register of
   deployable profiles.
@@ -97,8 +97,18 @@ Key components (see `orchestration/orchestrator/README.md`):
 | `app/registry.py` | Roster-backed profile registry (`profiles/noesis-roster.yaml` + `agents/*/agent.yaml`) |
 | `app/policy.py` | Deterministic refusals: assignment, risk, approval, dependency, evidence, staleness |
 | `app/store.py` | Append-only JSONL ledger, replayed on start |
-| `app/control_plane.py` | `Orchestrator` and `CircuitBreaker` — the only component that mutates state |
-| `tests/` | Policy, lifecycle, schema-conformance, and worked-example tests |
+| `app/control_plane.py` | `Orchestrator` and `CircuitBreaker` — the only component that mutates contract state |
+| `app/delegation.py` | Delegated-task contracts: typed payloads, permitted senders, validation, approval bindings |
+| `app/lease_lifecycle.py` | Persisted-fold `TaskStore`: flock-guarded JSONL transaction log, immutable revision copies, compare-and-swap fencing against stale workers |
+| `app/delivery_planner.py` | Non-executing delivery-loop planner (authority-scoped approval objects) |
+| `app/launcher.py` | Explicit runtime launch with recorded attestation (profile, backend, revision) |
+| `app/specialist_dispatch_cli.py` | Normal request entrypoint used for orchestrated dispatch |
+| `app/specialist_routing.py` | Classification and eligible-specialist discovery |
+| `app/planning.py`, `app/graph.py`, `app/graph_query.py` | Plan/dependency graphs and querying |
+| `app/inference_routing.py` | Model/provider lane resolution |
+| `app/subagent_development.py` | Reviewer-gated build-development contracts |
+| `supervisor.py` | Sweep daemon: replays the ledger, calls `sweep_timeouts()` each interval (default 60 s), fail-closed on faults; runs under `ai.noesis.orchestrator` (launchd) |
+| `tests/` | Policy, lifecycle, lease, replay, schema-conformance, and worked-example tests — **407 tests** |
 
 Contracts: schema `contracts/orchestration/task-contract.schema.json`; ledger
 `workspace/orchestrator/tasks.jsonl` (append-only, one
@@ -117,11 +127,20 @@ Full transition table, approval gates, operator procedures, recovery, and
 emergency stop are in `WORKFLOWS.md` §5. Run the tests with:
 
 ```bash
-cd orchestration/orchestrator && python -m pytest -q
+cd orchestration/orchestrator
+~/projects/noesis-agent-stack/.venv/bin/python -m pytest -q   # 407 passed
 ```
 
 No network, no credentials, and no repository writes: every test uses a
 `tmp_path` ledger.
+
+**Timeout semantics (explicit):** wall-clock/claim expiry is not an immediate
+submit fence — denial relies on supervisor timeout processing
+(`sweep_timeouts`, default 60 s interval). Expire/revoke/cancel fence
+immediately; a post-expiry submit can succeed only until the next sweep
+observes the expiry, then fails closed. Workers cannot hold TaskStore
+authority; production entry is the Orchestrator, so worker-side expiry races
+are structurally excluded.
 
 ### Broker — OpenClaw worker control plane
 
@@ -161,6 +180,11 @@ Hermes profiles under `~/.hermes/profiles/<name>/`.
 | `noesis-herald` | comms-drafter | specialist | Strategic comms drafting; never sends autonomously |
 | `noesis-architect` | agent-designer | specialist | Agent/Hermes/MCP/prompt design |
 | `noesis-skeptic` | adversarial-reviewer | reviewer-only | Red-team / adversarial QC; no execution |
+
+`agents/` additionally retains the supporting lanes `noesis-clawdev/`,
+`noesis-praxis/` (council/aeon orchestration skill + runbook),
+`claude-code-worker/`, `main-hermes/`, `research-openclaw/`,
+`subconscious-openclaw/`, and `job-application-pipeline/`.
 
 ### Third-party "agency" fleet
 
@@ -203,6 +227,8 @@ evidence and canary status are recorded in `ROUTING-SMOKE.md`.
 .
 ├── README.md
 ├── SPEC.md, WORKFLOWS.md, ROUTING-SMOKE.md, HEARTBEAT.platform.md
+├── DEPLOYMENT-PROMPT.md, DEPLOYMENT-RUNBOOK.md   # repository-verified operator runbook
+├── DEVELOPMENT_PLAN.md, IMPLEMENTATION_PLAN.md, TODO.md
 ├── profiles/
 │   ├── noesis-roster.yaml          # in-house fleet (16), machine-readable
 │   ├── model-profiles.yaml
@@ -211,23 +237,31 @@ evidence and canary status are recorded in `ROUTING-SMOKE.md`.
 │   ├── noesis-*/                   # in-house fleet (SOUL.md + agent.yaml)
 │   ├── main-hermes/                # original supervisor design
 │   ├── research-openclaw/, subconscious-openclaw/
-│   ├── noesis-forge/, noesis-clawdev/, claude-code-worker/
+│   ├── noesis-clawdev/, claude-code-worker/, job-application-pipeline/
 │   └── noesis-praxis/              # council/aeon orchestration skill + runbook
 │       # agency-*/ profiles are GENERATED (agency/convert.py), not committed:
 │       # see agency/README.md — materialized at apply time by
 │       # scripts/apply-agency-profiles.sh / the Ansible hermes_profiles role.
 ├── agency/                         # Agency catalog integration (curation, convert, validate)
 ├── orchestration/
-│   ├── orchestrator/               # durable task-contract control plane
+│   ├── orchestrator/               # durable task-contract control plane (+ supervisor.py sweep daemon)
 │   └── broker/                     # OpenClaw worker control plane
 ├── contracts/                      # schemas, handoffs, task-contract, bridge
 ├── shared/                         # policies, schemas, models, tools
 ├── platform/                       # routing, risk tiers, approval manifests
 ├── workspace/                      # orchestrator ledger, per-profile worktrees
+├── apps/                           # careerops-dashboard, noesis-ops-dashboard
+├── assets/                         # logos and brand assets
+├── catalog/                        # companion catalog notes
+├── config/                         # stack.yaml, runtime-inference-routing example env
+├── docs/                           # operations evidence, decisions, architecture notes
+├── evals/                          # platform evaluations
+├── honcho/                         # Honcho memory profile definitions
+├── integrations/                   # hermes-plugin integration
 ├── scripts/                        # apply-agency-profiles, verify-live-config, hooks
 ├── skills/                         # fleet skill definitions
-├── evals/                          # platform evaluations
-└── docs/                           # operations, decisions, architecture notes
+├── specs/                          # dream-scheduler-mcp, openclaw-dryrun-contract
+└── templates/                      # agent-install prompt, hermes-openclaw config template
 ```
 
 The layout evolves, but the repo preserves strong isolation between the durable
@@ -235,7 +269,7 @@ orchestrator ledger, per-profile worktrees, and shared handoff surfaces.
 
 ## Companion repositories
 
-The Noesis Agent Stack is deployed and operated alongside two companion
+The Noesis Agent Stack is deployed and operated alongside three companion
 repositories:
 
 - **[NoesisPraxis Ansible Stack](https://github.com/enuno/noesis-ansible)**
@@ -244,14 +278,22 @@ repositories:
   (`hermes_profiles_fleets`); it also manages the ACP/A2A/MCP registries, agent
   runtimes, observability, and the human-in-the-loop Telegram channel. Agency
   profiles are default-OFF and require explicit enablement
-  (`noesispraxis_enable_agency_profiles: true`). Local reference:
-  `~/projects/noesis-ansible`.
+  (`noesispraxis_enable_agency_profiles: true`). It additionally carries the
+  reviewed fail-closed `macos_prodqual_loopback` package for the production
+  target `noesis-prodqual-macos-arm64-loopback-control-plane/v1`. Local
+  reference: `~/projects/noesis-ansible`.
 
 - **[Noesis Prompt Library](https://github.com/HashGrid-Networks/noesis-prompt-library)**
   — the shared prompt library and reference prompt set used by the fleet for
   complex agent goals and deployment prompts (ACP/A2A/MCP registries, Telegram,
   OpenClaw, ClawDev/HermesDev). Renamed from the former `noesis-prompt-cache`,
   which is superseded.
+
+- **[enuno/hermes-agent](https://github.com/enuno/hermes-agent)** — the
+  operator-owned Hermes Agent fork consumed by the qualified release: the
+  runtime-enforcement HARDENING line and the qualified prodqual adaptation
+  branch are published here, and the production target installs the runtime
+  payload from an exact pinned commit (never a moving branch).
 
 ## Safety model
 
@@ -267,38 +309,67 @@ This system is designed around constrained autonomy.
 - Agency Tier A profiles are advisory-only and require human approval for
   production / credential / financial / external-communication actions.
 - Validation, freshness checks, contradiction tracking, release gates, and
-  durable-ledger admission (where enforced) block unsupported promotion.
+  durable-ledger admission block unsupported promotion.
+- The persisted-fold TaskStore fails closed: stale-worker submissions are
+  rejected by epoch fencing and revision comparison, and a torn or replayed
+  ledger line never grants authority.
 
 ## Status
 
-**Implemented and offline-verified (2026-10-06):** the broker control plane
-(`orchestration/broker/`) and the orchestrator control plane
-(`orchestration/orchestrator/`) are implemented with passing test suites,
-including durable emergency-stop, registry-lane admission, correlated lifecycle
-event streams, and structured errors. Validators (inference-routing policy,
+**Implemented and verified (2026-10-11):** the orchestrator control plane
+(`orchestration/orchestrator/`) runs **407 passing tests**, including the
+persisted-fold TaskStore with orchestrator-granted epochs and lease fencing,
+the delivery-loop planner, launcher attestation, correlated lifecycle event
+streams, and durable emergency stop. The broker control plane
+(`orchestration/broker/`) suite passes. Validators (inference-routing policy,
 Honcho profile definitions, agency catalog names against the pinned upstream
-checkout, and live-config compliance via `scripts/verify_live_config.py`) pass.
-Evidence: `docs/operations/deployment-verification-2026-10-06.md`.
+checkout, and live-config compliance via `scripts/verify_live_config.py`)
+pass. Evidence: `docs/operations/deployment-verification-2026-10-06.md` and
+`docs/operations/deployment-verification-2026-10-07.md`.
 
-**Deployed:** in-house profile fleet applied to `~/.hermes`; wave-2/3 in-house
-profiles staged on operator go-ahead; the agency Tier A fleet is materialized
-via the Ansible role (default-OFF) behind the B2 commit review gate.
+**Release qualification (2026-10-11):** the production qualification line is
+independently reviewed component-by-component (Noesis Sentinel spec review,
+then Noesis Skeptic adversarial review, with findings resolved or explicitly
+carried): the orchestrator combined tree (planner + persisted-fold lease
+lifecycle), the Hermes runtime-enforcement HARDENING line, the qualified
+adaptation successor (recipe `hardening-1-trusted-manifest-runtime/v2`), and
+the Ansible `macos_prodqual_loopback` package (three-state: offline package
+approved-with-comments / automation-as-source pass / deployed not claimed).
+Review receipts and digests are recorded in `docs/operations/`. Qualified
+revisions are merged or published on the operator-owned repositories; the
+production target `noesis-prodqual-macos-arm64-loopback-control-plane/v1` is
+adopted and pinned by exact immutable SHA.
 
-**Governance:** the external-review freeze is in effect for the frozen Track A
-candidate and revised Track B snapshot; no verdict constitutes installation,
-activation, canary, live-goal, commit, push, merge, or deployment approval.
+**Deployed:** the in-house profile fleet is applied to `~/.hermes`; the agency
+Tier A fleet is materialized via the Ansible role (default-OFF). Production
+deployment of the qualified release proceeds only through the reviewed
+Ansible package, phase-gated (OS identities → authorized apply → offline
+validation → separately approved activation and bounded canary), with
+supervisor/operator procedures in `DEPLOYMENT-RUNBOOK.md`.
 
-**Verified live (inference):** not yet — blocked on an approved inference
-budget. `ROUTING-SMOKE.md` rows remain unrecorded for live lanes.
+**Governance:** every component carries independent review dispositions;
+no receipt approves itself, and no verdict constitutes installation,
+activation, canary, merge, or deployment approval. Those gates are operator
+decisions, one at a time.
+
+**Verified live (inference):** routing-smoke rows in `ROUTING-SMOKE.md`
+remain partially unrecorded pending a bounded live canary; the canary
+envelope (profiles, task, provider route, request/turn/duration limits, and
+cost ceiling) requires explicit operator approval before any live inference
+lane is exercised.
 
 ## Roadmap
 
-1. Complete external independent review of the frozen Track A candidate and the
-   revised Track B runtime-enforcement snapshot.
-2. Implement and accept the durable TaskStore admission authority
-   (`noesis_taskstore_admission/v1`) under a separately authorized plan.
-3. Restart/concurrency acceptance for governed runtime enforcement.
-4. Full-suite and cross-component integration review in an authorized
-   integration workspace.
-5. Live-goal execution under an approved inference budget, with reviewer
-   eligibility confirmed.
+1. ~~Implement and accept the durable TaskStore admission authority~~ —
+   **done (2026-10-11):** persisted-fold `TaskStore` with epoch fencing,
+   qualified by independent Sentinel + Skeptic review.
+2. Complete the phase-gated production deployment of the qualified release
+   per `DEPLOYMENT-RUNBOOK.md` (apply → offline validation → activation).
+3. Bounded live canary under an approved envelope (provider route, request /
+   turn / duration limits, cost ceiling), then record the live routing-smoke
+   rows in `ROUTING-SMOKE.md`.
+4. Restart/concurrency acceptance for governed runtime enforcement beyond the
+   single-host loopback target.
+5. Wider rollout decision — explicitly out of scope until canary success;
+   no new hosts, autoscaling, broader credentials, or increased spending is
+   implied by any passing phase.
