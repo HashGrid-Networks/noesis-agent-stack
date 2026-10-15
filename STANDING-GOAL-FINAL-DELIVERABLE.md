@@ -1,13 +1,25 @@
-# Specialist Discovery and Delegation — Final Deliverable
+# Noesis Delegation — Standing Goal and Final Deliverable
 
 **Repository:** `git@github.com:enuno/noesis-agent-stack.git`
-**Branch:** `a6-checkpoint/2026-10-11` (operator fork `enuno/noesis-agent-stack`)
-**Latest commit:** `308d2d5` (HARDENING-1 halted; route blocker; pushed)
-**Suite:** **360 passed / 0 failed** (`orchestration/orchestrator/tests/`, ~43s)
-**Status:** Specialist routing + planner + delivery-loop planner + delegated-task
-state + lease-lifecycle design complete; HARDENING-1 implementation copy-ready
-for operator-mediated hand-carry. Production release candidate and deployment
-approval package held; not granted.
+**Workspace branch at amendment:** `docs/status-reconcile-2026-10-12`
+**Workspace revision at amendment:** `cc0f3001c7ee0ce9fda58be21f282e8b2b57ebe8`
+**Document version:** v3.0 (protocol-adaptable delegation amendment, 2026-10-15)
+**Verification baseline:** **444 passed / 0 failed** for the current bounded
+A2/A3/B1 offline candidate; the earlier 430-test pre-slice baseline and the
+360/342-test checkpoints below are retained as historical chronology.
+**Status:** Native specialist routing is implemented and locally tested. The
+installed-runtime specialist canary remains **BLOCKED**. Runtime restoration was
+verified at the historical rollback checkpoint; a later unrelated
+`codebase_memory` configuration drift is recorded separately and was neither
+adopted nor reverted. ACP and A2A are approved architecture/planning directions
+only—not approved implementations or verified deployments. Production release
+and deployment approval remain held.
+
+> **Historical-record boundary.** Sections 1–8 preserve the 2026-10-11
+> checkpoint chronology and its then-current completion/test claims. They are
+> evidence history, not statements that the amended v3.0 goal is currently
+> complete or deployed. Section 9 and the final Acceptance table are the current
+> planning baseline and disposition.
 
 ---
 
@@ -253,6 +265,318 @@ remove 6 ADD; verified procedure, HEAD stays `c5733167…`).
 
 ---
 
+## 9. Governed, protocol-adaptable delegation amendment
+
+### 9.1 Amended standing goal
+
+Evolve the Hermes-centered Noesis orchestration engine so one admitted Noesis
+task attempt can execute through one of three explicitly selected adapters:
+
+1. the existing qualified native/local Hermes profile path;
+2. an **Agent Client Protocol (ACP)** client path to a compatible,
+   session-based worker; or
+3. an **Agent2Agent (A2A)** client path to an approved, independently deployed
+   agent service.
+
+The protocol is never the orchestration authority. Noesis continues to own
+specialist selection, task-contract validation, admission, authorization,
+approval, budget reservation, durable task/attempt identity, lease and
+revocation, recovery, provenance, independent verification, and acceptance.
+Workers report outcomes; they do not approve themselves, expand their scope,
+renew authority, declare independent QA complete, or mark work accepted.
+
+```text
+Human / NoesisPraxis user-facing intake
+    ↓
+Hermes-centered Noesis orchestration
+    - specialist selection
+    - task-contract validation
+    - admission and authorization
+    - budget reservation
+    - durable attempt identity
+    ↓
+Noesis-owned delegation adapter boundary
+    ├─ native/local adapter → qualified Hermes profile
+    ├─ ACP client adapter   → compatible session-based worker
+    └─ A2A client adapter   → approved independent agent service
+    ↓
+normalized progress, artifacts, failures, cancellation, and terminal state
+    ↓
+Noesis verification, independent QA, and explicit acceptance
+```
+
+Supervision, research, reflection, implementation, and independent QA remain
+separate responsibilities. OpenClaw and coding harnesses remain bounded workers.
+No adapter may assume that workers are stateless, ephemeral, or interchangeable.
+No parallel task store, approval ledger, scheduler, or delegation service is
+introduced.
+
+### 9.2 Architecture decision record: ADR-PDA-001
+
+**Title:** Keep authority in Noesis; treat native, ACP, and A2A as execution
+adapters
+
+**Status:** Accepted for architecture and implementation planning; execution
+phases are separately gated
+
+**Date:** 2026-10-15
+
+**Context.** Noesis already has durable task contracts, append-only state,
+assignment/attempt fencing, leases, approvals, bounded retry, launch
+reservations, quarantine, provenance, review, and explicit acceptance. Its
+current runtime boundary is shaped around a local `HermesCliAdapter`. Installed
+Hermes also contains (a) an inbound ACP server/session implementation, (b) a
+Copilot-specific outbound ACP client shim, and (c) inbound and outbound A2A
+implementation. These protocol implementations are not automatically integrated
+with the Noesis task lifecycle and are not evidence of an active deployment.
+
+**Decision.** Introduce one transport-neutral, Noesis-owned adapter contract
+behind the existing dispatch/admission path. Extend existing `TaskContract`,
+`Delegation`, launch reservation, handoff, and event records only where a
+protocol-neutral value is missing. Every adapter must normalize protocol state
+into the existing Noesis task/attempt identity and lifecycle. Native/local
+remains the regression baseline. ACP is implemented first, for one explicitly
+selected local specialist over a bounded stdio process. A2A is deferred until a
+named remote service creates a requirement that native/local or ACP cannot
+satisfy.
+
+**Protocol definitions.** ACP here means **Agent Client Protocol**, not IBM's
+former Agent Communication Protocol. It is a client-to-worker session protocol.
+A2A is the interface to independently deployed agent services. Discovery is not
+authorization, and A2A is not required for local profiles.
+
+**Consequences.**
+
+- Noesis task, attempt, approval, budget, lease, review, and acceptance records
+  remain authoritative.
+- Protocol session/task/context identifiers are correlations, not identities or
+  grants of authority.
+- Adapter failure never silently changes worker, profile, provider, model,
+  transport, endpoint, or approval context.
+- No delivery semantic is assumed: the adapter must not claim at-most-once,
+  at-least-once, or exactly-once behavior without protocol- and worker-specific
+  evidence. Idempotency, duplicate suppression, reconciliation, and manual
+  disposition are required before retrying an ambiguous attempt.
+- `cancel_requested`, `cancel_acknowledged`, `execution_stopped`, and
+  `authority_revoked` are distinct facts. Transport cancellation is not proof
+  of process termination.
+- Passing mock protocol tests proves only contract behavior, not installed or
+  production qualification.
+
+**Rejected alternatives.** A second protocol-specific scheduler or ledger;
+letting a worker or Agent Card authorize itself; making every profile an A2A
+service; deploying a registry for one known endpoint; treating Hermes's inbound
+ACP server as proof of a general outbound Noesis ACP client; using ACP/A2A to
+bypass the blocked native canary.
+
+### 9.3 Transport-neutral delegation contract
+
+Map these values onto the current Noesis records before adding new storage:
+
+| Concern | Existing authoritative surface | Minimal adapter-neutral addition or rule |
+|---|---|---|
+| Task and admitted attempt | `TaskContract.task_id`; `Delegation.attempt`, `attempt_epoch`, `assignment_epoch`, `contract_revision`, `baseline`; launch reservation | Add an immutable `adapter_kind` and an adapter correlation object only after admission. |
+| Worker identity | `assignee_profile`, `runtime_profile`, launch attestation and profile manifest digest | Bind expected worker/profile identity plus adapter-specific attestation; mismatch quarantines the attempt. |
+| Capability and scope | `required_capability`, `intent`, acceptance criteria, risk tier, labels | Add a normalized capability snapshot and allowed operations; protocol-advertised capabilities cannot expand it. |
+| Inputs and disclosure | Structured prompt/handoff and workspace binding | Add input references, sensitivity class, allowed destination, and disclosure restrictions; do not embed secrets. |
+| Approval and authority | `Approval`, risk policy, approved route, lease/revocation/quarantine | Permission requests are evaluated against the existing grant; absent or ambiguous authority denies or pauses. |
+| Bounds | timeout/lease, retry limits, request/token budgets, approved provider/model, fallback denial | Add adapter request/concurrency/resource ceilings and remote cost reconciliation where applicable. |
+| Progress and artifacts | `noesis.delegated-task/v1` messages, handoff, `LaunchResult.artifacts`, digests | Normalize progress, partial artifacts, source session/task ID, integrity digest, and collection error. |
+| Cancellation and failure | cancellation lifecycle, process-group cleanup, quarantine, `cleanup_state`, `workspace_reusable` | Record request, acknowledgement, observed stop proof, authority revocation, and `uncertain` outcome separately. |
+| Verification and acceptance | revision-bound spec/quality reviews and explicit orchestrator acceptance | Adapter-reported success can create a candidate only; it cannot set acceptance. |
+
+The normalized adapter result must preserve at least: task ID, attempt ID,
+assignment/attempt epoch, adapter kind, expected and observed worker identity,
+protocol version, protocol session/task/context ID, progress sequence, artifact
+references and digests, usage/cost when known, cancellation observations,
+terminal disposition, and uncertainty reason. Unknown usage remains unknown,
+never zero.
+
+### 9.4 Repository-grounded current state and gap table
+
+Confidence labels: **verified** means read directly from the named repository or
+installed source during this amendment; **tested** means backed by the recorded
+local test/run evidence; **unverified** means configuration or code exists but no
+qualifying deployment evidence was observed.
+
+| Area | Intended architecture | Implemented repository behavior | Installed runtime capability | Verified deployment / gap |
+|---|---|---|---|---|
+| Noesis authority | One control plane owns lifecycle and acceptance | **Verified:** `control_plane.py`, `models.py`, `store.py`, `delegation.py`, and policy code implement append-only state, approval/dependency gates, assignment and attempt fencing, leases, bounded retry, quarantine, structured handoff, revision-bound review, and explicit acceptance. The A2 types in `transport_contract.py` are projections only and add no store, scheduler, ledger, or event authority. | The Python control plane and local profile resolver exist. | **Tested:** 444 orchestrator tests pass on the current offline candidate. No persistent schema changed. Independent review remains pending. |
+| Native/local execution | Explicit selected profile through a governed adapter | **Implemented and tested offline:** `RuntimeAdapter`/`HermesCliAdapter` retain the existing launch behavior; `launch_request()` maps the transport-neutral request onto that path. Existing profile attestation, fallback denial, provider/model and lease binding, spawn authority checks, cleanup uncertainty, artifact collection, review, and acceptance tests remain green. | **Verified historical source/runtime:** installed Hermes v0.22.1, source revision `297552a9d646119871391d202509822cd86330df`; direct zero-inference profile attestation succeeded earlier. This slice did not invoke it. | **BLOCKED for model-facing use:** toolset exposure and installed plugin/source drift remain unresolved. The credential root cause also remains unresolved: route-specific absence, exhaustion, cooldown, expiry, provider/model mismatch, or profile/store mismatch has not been distinguished, and the credential-pool log is not proof of the generic startup error. Restoration was verified only at the historical rollback checkpoint; later unrelated `codebase_memory` config drift remains separately recorded. No retry is authorized. |
+| ACP worker/server side | A selected worker exposes session semantics | No Noesis ACP adapter exists. `noesis-ansible/roles/hermes_acp` describes a service, config, registry registration, and validation. | **Verified source capability:** installed `acp_adapter/session.py` persists and restores Hermes ACP sessions and binds cwd; Hermes documents `hermes acp`. This is worker/server-side capability, not a Noesis outbound client. | **Unverified:** `noesispraxis_enable_hermes_acp` defaults false; role installation uses `latest`, ignores material errors, assumes a Linux binary/service and HTTP health around a stdio adapter. No active service was proven. |
+| ACP client side | General client maps session lifecycle to one Noesis attempt | No such adapter exists in `noesis-agent-stack`. | **Verified source capability, limited:** `agent/copilot_acp_client.py` is an outbound stdio client specifically for `copilot --acp`; it sends ACP protocol version 1 initialization, creates a new session, submits a prompt, consumes updates, bounds the whole session by a timeout, and terminates the subprocess. It currently cancels permission requests, has no durable Noesis correlation, no session continuation in this path, no explicit protocol cancel exchange, and may continue on the session default if requested model selection fails. | Not qualified as a general ACP adapter and not suitable unchanged for the Noesis authority boundary. Exact protocol-version and worker compatibility remain to be verified. |
+| A2A outbound | Approved remote service behind Noesis adapter | No Noesis A2A adapter exists. Registry roles and historical plans exist in `noesis-ansible`. | **Verified source capability:** installed `plugins/platforms/a2a/tools.py` can discover Agent Cards and send A2A v1.0 `SendMessage` calls to configured peers; it also accepts direct URLs and contains model-facing fan-out helpers. | **Unverified and currently too permissive for Noesis:** discovery/call paths are not bound to Noesis admission, allowlists, attempt identity, budgets, QA, or acceptance. No approved remote target was identified. |
+| A2A inbound | Optional service interface, separately governed | No Noesis control-plane integration. | **Verified source capability:** installed `plugins/platforms/a2a/adapter.py` is an inbound HTTP server with Agent Card, authenticated/trusted-peer checks, task/status/cancel methods, and gateway-session routing. | No active/exposed service was verified. Inbound support does not prove the required outbound Noesis adapter. |
+| Registries and deployment | Reproducible, pinned, fail-closed deployment only when justified | `noesis-ansible` has ACP/A2A registry roles, playbooks, endpoints, rollback hooks, and component toggles. | Files and defaults exist; broad `noesispraxis_enable_acp/a2a` flags are true in several inventories while the Hermes ACP role flag is false by default. | **Unverified:** registry entries and toggles are plans/configuration, not deployment proof. Several validations/install steps use `ignore_errors`; registry deployment is not required for the first known ACP endpoint or one future A2A endpoint. |
+| NoesisPraxis relationship | Human-facing intake may lead into the Noesis control plane; authority stays with orchestrator | **Verified:** `noesis-praxis` is not an entry in `profiles/noesis-roster.yaml` or `platform/runtime-reconciliation.yaml`. The current roster consolidates Hermes-Core into `noesis-orchestrator`, mapped historically to the default profile. `agents/noesis-praxis/` is retained as a council/aeon skill/runbook and legacy identity; `noesis-ansible` also uses NoesisPraxis as stack/host naming. | Some generated/live profile material still carries the NoesisPraxis persona and remote host name. | No evidence establishes a separate deployed NoesisPraxis orchestration authority. In this target architecture, “Human / NoesisPraxis” is an intake/persona boundary, not a new scheduler, profile requirement, or service grant. |
+| Evidence levels | Mocks, processes, installation, live calls, and distributed operation are distinct | **Implemented and tested:** the synthetic in-memory `noesis-fake-acp/v1` fixture covers capability negotiation, correlated session creation, prompt submission, ordered updates/results, permission denial, malformed/unsupported messages, early exit, timeout, cancellation observations, partial/uncertain output, duplicate suppression, and explicit restart reconciliation. It has no model, credential, network, subprocess, tool, or operational capability. | Protocol-related source is installed but was not exercised by this slice. | 14 new contract tests pass; this is mocked contract evidence only. Fixture framing, exact method names, continuation, permission/cancellation acknowledgement semantics, and general Hermes outbound ACP compatibility remain unverified. |
+
+Source anchors for this table include
+`orchestration/orchestrator/app/{control_plane,models,store,delegation,launcher}.py`,
+`profiles/noesis-roster.yaml`, `platform/runtime-reconciliation.yaml`,
+`agents/noesis-praxis/SOUL.md`, the `noesis-ansible` ACP/A2A roles and
+inventories, installed Hermes `agent/copilot_acp_client.py`,
+`acp_adapter/session.py`, `plugins/platforms/a2a/{tools,adapter,protocol}.py`, and
+the matching Hermes ACP/A2A documentation at
+<https://hermes-agent.nousresearch.com/docs/user-guide/features/acp>,
+<https://hermes-agent.nousresearch.com/docs/developer-guide/acp-internals>, and
+<https://hermes-agent.nousresearch.com/docs/user-guide/messaging/a2a>.
+
+### 9.5 Adapter capability and failure requirements
+
+Before an adapter can qualify, document and test its exact support for:
+
+- identity/profile attestation and working-directory/environment binding;
+- initialization and capability/version negotiation;
+- session/task creation, continuation, reconnect, and persistent state;
+- prompt/message submission, progress ordering, results, and partial artifacts;
+- approval-bound permission handling;
+- deadline, request, concurrency, resource, token, and cost ceilings;
+- cancellation request, acknowledgement, observed execution stop, and authority
+  revocation as separate states;
+- restart safety, idempotency, duplicate suppression, ambiguous-outcome
+  reconciliation, and retry eligibility;
+- artifact provenance and integrity; and
+- final independent verification and explicit Noesis acceptance.
+
+No adapter may claim exactly-once execution. An uncertain remote or local
+outcome blocks automatic redispatch until reconciled. A transport cancellation
+acknowledgement is not proof that a subprocess, model request, or remote task has
+stopped. Authority can be revoked even when stop is unconfirmed; the attempt then
+remains quarantined/uncertain.
+
+### 9.6 Bounded phased backlog
+
+| Phase / item | Dependency | Deliverable | Acceptance criterion | Authorization state |
+|---|---|---|---|---|
+| A1. Freeze ADR and interface map | This amendment | ADR-PDA-001 plus current-state/gap table | Operator can trace every proposed value to an existing authority surface or a justified additive field. | **Done by documentation amendment.** |
+| A2. Specify normalized adapter types | A1 | Typed adapter request, progress event, result, cancellation observation, and capability matrix | No protocol field can mutate approval, lease, review, or acceptance; invalid-state tests pass. | **Implemented in bounded offline candidate; 14 contract tests pass; no persistent schema change; independent review pending.** |
+| A3. Native conformance adapter | A2 | Wrap/refine current native path against the normalized types without behavioral change | Existing native suite stays green; explicit profile/route/fallback, lease, quarantine, artifact, and acceptance behavior is unchanged. | **Implemented in bounded offline candidate; focused 93/93 and full 444/444 pass; independent review pending.** |
+| B1. ACP compatibility fixture | A2 | Synthetic in-memory ACP-like peer and transcript fixtures with pinned assumptions | Covers initialize/capabilities, session creation, prompt, updates/result, permission request, timeout, cancellation behavior, malformed messages, early exit, and uncertain cleanup without model/network/process use. | **Implemented and tested at mocked-contract level only; installed Hermes assumptions remain unverified; independent review pending.** |
+| A4. Offline-slice independent review | A2, A3, B1 exact candidate | Sentinel authority/spec review, then Skeptic quality/security review of identical candidate contents | Sentinel PASS precedes Skeptic; verdicts bind to the exact content manifest; no historical verdict is reused. | **Prepared for operator-mediated review; no authorized in-session review route is available under the no-provider/no-worker limit.** |
+| B2. Minimal ACP stdio adapter | B1, A3 | Noesis-owned outbound ACP adapter for one selected Hermes specialist | Explicit worker/profile attestation; one admitted attempt ↔ one ACP session; no fallback; bounded process/request budget; fail-closed permissions; durable correlation; partial evidence retained. | Not authorized. |
+| B3. Independent review | B2 | Sentinel authority/spec review, then Skeptic quality/security review of the exact candidate | Sentinel PASS precedes Skeptic; verdicts are candidate-revision-bound; no historical verdict is reused. | Separately gated. |
+| C1. Installed-runtime ACP test | B3, reproducible installation plan | Offline installed-process test with no model request | Proves command/profile binding, negotiation, cancellation/cleanup, rollback, and hashes on the installed version. | Separate approval required. |
+| C2. Bounded live ACP canary | C1, resolved credentials and exact canary contract | One synthetic task with parent/worker request and cost ceilings | Tool exposure, profile attestation, session correlation, ledger events, artifact digest, usage/cost, stop proof, independent verification, and restoration all pass. | Explicit live/inference/spend approval required. |
+| D1. A2A requirement record | Named independent service exists | Target, owner, Agent Card/version, endpoint, auth, disclosure class, capability, operational value, and why native/ACP cannot satisfy it | Operator approves the named service and data boundary before any implementation. | Deferred. |
+| D2. Explicit-endpoint A2A adapter | D1, A2A threat/data review | Noesis adapter to one allowlisted endpoint; no registry dependency | Agent Card validated as untrusted metadata; configured identity/destination/auth wins; durable task correlation, status/artifacts/cancel/uncertainty and budgets map into Noesis. | Deferred and separately gated. |
+| D3. Discovery/registry | Multiple approved dynamic services and demonstrated operational need | Governed discovery with allowlists and lifecycle ownership | Registry adds measurable value; discovery never grants authorization; deployment and rollback are reproducible. | Not triggered. |
+
+Tests must report five separate evidence levels: (1) mocked protocol contracts,
+(2) real local process/session behavior, (3) installed-runtime integration,
+(4) live model-facing delegation, and (5) verified distributed operation. A
+lower level never implies a higher one.
+
+### 9.7 Smallest proposed ACP implementation slice
+
+**Worker:** `noesis-forge`, because it is an existing bounded implementation
+specialist with an explicit profile identity and an independent review path.
+This selection is a compatibility target, not authorization to invoke it.
+
+**Transport:** one child stdio process exposing Hermes's ACP worker interface,
+with the exact installed command/profile syntax and negotiated protocol version
+determined by offline fixture and parser validation before implementation. Do
+not infer compatibility from the presence of `acp_adapter/session.py`. Do not
+reuse the Copilot-specific client unchanged.
+
+**Slice boundary:**
+
+1. retain existing specialist selection, task proposal, approval, dependency,
+   budget, lease, reservation, and fallback-deny gates;
+2. select `adapter_kind=acp_stdio` explicitly—never as automatic fallback;
+3. spawn only the expected Hermes executable/profile/working directory under a
+   process group and remaining lease;
+4. negotiate the pinned supported ACP version and required capabilities;
+5. create one new ACP session and durably bind its session ID to the existing
+   task/attempt/epoch and adapter process identity;
+6. submit one synthetic/non-secret prompt and normalize ordered updates,
+   terminal result, partial artifacts, and errors;
+7. deny permission requests not already covered by the Noesis grant; the first
+   slice may fail closed on every interactive permission request rather than
+   auto-approve;
+8. on timeout/cancel, request protocol cancellation when supported, revoke
+   Noesis authority, terminate the process group, verify whether execution
+   stopped, retain partial evidence, and mark uncertainty if stop is not proven;
+9. produce a candidate only—existing review and acceptance gates remain
+   unchanged; and
+10. leave native/local behavior and schema replay compatible.
+
+**Deliberately excluded from the first slice:** session continuation across
+attempts, remote ACP transport, multiple workers, dynamic worker discovery,
+model/provider fallback, automatic permission approval, parallel fan-out,
+registry deployment, A2A, production service activation, and live inference.
+
+### 9.8 Concrete trigger for A2A work
+
+A2A work begins only when the operator names and approves an independently
+deployed agent service that must preserve state or operate outside the local
+Hermes/ACP process boundary, and documents a required capability or
+interoperability outcome that the native/local and ACP paths cannot meet. The
+requirement record must include the service owner, approved endpoint,
+Agent Card/protocol version, authenticated identity, capability, data
+classification and disclosure policy, expected remote state/lifetime,
+cancellation/status/artifact support, resource and cost ceilings, failure
+isolation, and operational benefit.
+
+One configured endpoint starts with explicit allowlisted configuration. A
+registry/discovery service is triggered only when multiple approved dynamic
+services make static endpoint ownership materially inadequate. An Agent Card or
+registry entry alone never triggers dispatch or grants authorization.
+
+### 9.9 Authorization boundaries and unresolved blockers
+
+**Authorized after this amendment:** one bounded offline development slice for
+A2, A3, and B1, including repository/document edits, synthetic tests, and
+operator-mediated Sentinel then Skeptic review of the exact candidate. That
+slice is implemented and locally tested; review remains pending.
+
+**Still not authorized:** the real Hermes ACP worker adapter; dependency or
+package installation; plugin copy/activation; service start/restart/enablement;
+endpoint exposure; credential, provider, model, fallback, route, or
+exhaustion-state change; live ACP/A2A/native worker invocation; model inference;
+spending; production apply; commit; push; merge; or destructive rollback.
+
+**Unresolved blockers:**
+
+1. the native specialist canary remains **BLOCKED** on installed-runtime
+   toolset exposure and installed plugin/source drift. The credential root cause
+   remains unresolved: the available evidence does not distinguish route-specific
+   absence, exhaustion, cooldown, expiry, provider/model mismatch, or
+   profile/store mismatch, and the credential-pool line does not prove the
+   generic startup error. ACP/A2A are not remedies for those issues. Restoration
+   was verified at the historical rollback checkpoint; the later unrelated
+   `codebase_memory` drift remains separately recorded and is neither adopted nor
+   reverted here;
+2. A2/A3/B1 implementation is locally green but has no Sentinel disposition;
+   Skeptic is therefore still gated. The exact candidate review packet must be
+   hand-carried by the operator because this slice forbids provider requests and
+   real worker invocation, and no substitute route is authorized;
+3. the fake fixture pins `noesis-fake-acp/v1` assumptions, but its framing,
+   exact method names, continuation behavior, permission/cancellation
+   acknowledgement semantics, and the selected worker's capability intersection
+   remain unverified against installed Hermes;
+4. installed Hermes has inbound ACP capability and a Copilot-specific outbound
+   shim, but no verified Noesis-governed general ACP client path;
+5. fake permission, cancellation, duplicate, restart, partial-output, timeout,
+   and unknown-usage semantics are specified and tested, but continuation,
+   process stop proof, durable real-session correlation, retry eligibility, and
+   budget/cost reconciliation remain to be verified for the selected real worker;
+6. `noesis-ansible` ACP/A2A material is unqualified: versions are not adequately
+   pinned, some critical errors are ignored, deployment ownership conflicts and
+   lifecycle assumptions need remediation, and no live registry/service was
+   proven;
+7. no named independent A2A service or compelling interoperability requirement
+   exists, so A2A implementation and registry deployment remain deferred;
+8. the suspended macOS ARM64 prodqual candidate
+   `aee125e4a39fa0b18f270195bedfc2b51439a527` remains unqualified; there is no
+   Sentinel receipt, Skeptic was not dispatched, and its gates are not reopened
+   by this amendment; and
+9. active runtime configuration changed after the specialist-canary rollback
+   checkpoint through an unrelated `codebase_memory` addition of unresolved
+   provenance; this amendment does not reverse or adopt that change.
+
+---
+
 ## Acceptance
 
 | Criterion | Status |
@@ -263,10 +587,23 @@ remove 6 ADD; verified procedure, HEAD stays `c5733167…`).
 | Representative tasks launch intended specialist through real path | ✅ 14/14 via real CLI entrypoint (attestation level) |
 | Unavailable/unauthorized specialists produce actionable blocked results | ✅ typed `RoutingBlocked` with reason codes |
 | Safety and inference-policy checks intact | ✅ model-policy gate tested post-selection |
+| One Noesis-owned transport-neutral adapter contract | ✅ implemented as non-authoritative projections; no persistent schema/store change; review pending |
+| Native path conformance with no regression | ✅ focused 93/93 and full 444/444 pass; no intended behavior change; review pending |
+| ACP mocked protocol contract | ✅ 14/14 synthetic in-memory tests pass; assumptions explicitly unverified against installed Hermes |
+| ACP real local process/session behavior | ⏳ not tested; real adapter not implemented or authorized |
+| ACP installed-runtime integration | ⛔ separately gated; not tested |
+| ACP live model-facing delegation | ⛔ separately gated; not authorized |
+| A2A approved independently deployed target | ⏸ deferred; trigger not met |
+| Verified distributed ACP/A2A operation | ⏸ not claimed |
 
-**The goal is complete to the maximum extent achievable without live-execution
-authorization.** The single remaining core milestone is Subgoal 5, fully
-prepared and blocked on one operator decision.
+**Current disposition:** the bounded A2/A3/B1 offline slice is implemented and
+locally green at mocked/native-contract evidence level. It is **not independently
+accepted**: Sentinel review is pending and Skeptic remains gated on Sentinel PASS
+for the identical candidate contents. The real Hermes ACP adapter, installed
+process qualification, live delegation, A2A, and production work remain held.
+The native specialist-routing canary stays **BLOCKED**; restoration was verified
+at the historical rollback checkpoint, and the later unrelated configuration
+drift remains separately recorded. No live retry is authorized.
 
 ---
 

@@ -25,6 +25,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+from app.transport_contract import CapabilityObservation, TransportRequest
+
 
 _AMBIENT_INFERENCE_ENV = (
     "HERMES_INFERENCE_MODEL",
@@ -332,6 +334,46 @@ class HermesCliAdapter:
 
     def profile_installed(self, profile_id: str) -> bool:
         return (self.profiles_root / profile_id).is_dir()
+
+    def observe_capabilities(self, profile_id: str) -> CapabilityObservation:
+        """Describe the existing native boundary without claiming worker features."""
+        supported = ("profile-attestation", "prompt", "cancel-process-group")
+        return CapabilityObservation(
+            transport="native",
+            worker_id=profile_id,
+            advertised=supported,
+            supported=supported if self.profile_installed(profile_id) else (),
+            assumptions_verified=self.profile_installed(profile_id),
+        )
+
+    def launch_request(self, request: TransportRequest, **runtime_options: Any) -> LaunchResult:
+        """Adapt the transport-neutral request onto the established native path."""
+        if request.transport != "native":
+            return self._blocked(
+                request.worker_profile,
+                [],
+                None,
+                "transport_mismatch",
+                "native launcher received a non-native transport request",
+            )
+        if request.worker_profile != runtime_options.pop(
+            "profile_id", request.worker_profile
+        ):
+            return self._blocked(
+                request.worker_profile,
+                [],
+                None,
+                "profile_mismatch",
+                "transport worker binding does not match the requested profile",
+            )
+        return self.launch(
+            profile_id=request.worker_profile,
+            prompt=request.prompt,
+            task_id=request.task_id,
+            cwd=request.cwd,
+            dry_run=request.dry_run,
+            **runtime_options,
+        )
 
     def _manifest_sha256(self, profile_id: str) -> str:
         digest = hashlib.sha256()

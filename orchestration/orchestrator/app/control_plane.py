@@ -11,15 +11,15 @@ already-running work is left to its lease and swept normally.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
-from datetime import datetime
-from pathlib import Path
-from typing import Any
-from uuid import UUID, uuid4
 import inspect
 import json
 import math
 import os
+from dataclasses import asdict, dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Any, cast
+from uuid import UUID, uuid4
 
 from app import policy
 from app.inference_routing import (
@@ -27,7 +27,7 @@ from app.inference_routing import (
     InferenceRoutingEnforcer,
     RoutingContext,
 )
-from app.launcher import HermesCliAdapter, RuntimeAdapter
+from app.launcher import HermesCliAdapter, LaunchResult, RuntimeAdapter
 from app.models import (
     Approval,
     Delegation,
@@ -63,6 +63,7 @@ from app.store import (
     TaskStore,
     TaskVersionConflict,
 )
+from app.transport_contract import TransportRequest
 
 # Consecutive failures within one correlation graph before dispatch is halted.
 DEFAULT_FAILURE_THRESHOLD = 3
@@ -245,6 +246,7 @@ class Orchestrator:
         prompt = make_child_prompt(task, selection)
         if dry_run:
             launch = self._invoke_launch(
+                task=task,
                 profile_id=selected.runtime_profile,
                 prompt=prompt,
                 task_id=str(task.task_id),
@@ -311,6 +313,7 @@ class Orchestrator:
         capped_timeout = min(float(timeout_s), remaining)
         try:
             launch = self._invoke_launch(
+                task=task,
                 profile_id=selected.runtime_profile,
                 prompt=prompt,
                 task_id=str(task.task_id),
@@ -403,8 +406,27 @@ class Orchestrator:
             "model_driven_canary": False,
         })
 
-    def _invoke_launch(self, **kwargs):
+    def _invoke_launch(self, **kwargs) -> LaunchResult:
         adapter = self.runtime_adapter
+        task = kwargs.pop("task", None)
+        launch_request = getattr(adapter, "launch_request", None)
+        if task is not None and callable(launch_request):
+            request = TransportRequest.from_task(
+                task,
+                prompt=kwargs.pop("prompt"),
+                cwd=kwargs.pop("cwd", None),
+                dry_run=bool(kwargs.pop("dry_run", True)),
+                expected_worker_profile=kwargs.get("profile_id"),
+            )
+            kwargs.pop("profile_id", None)
+            kwargs.pop("task_id", None)
+            signature = inspect.signature(launch_request)
+            if not any(
+                param.kind == inspect.Parameter.VAR_KEYWORD
+                for param in signature.parameters.values()
+            ):
+                kwargs = {key: value for key, value in kwargs.items() if key in signature.parameters}
+            return cast(LaunchResult, launch_request(request, **kwargs))
         signature = inspect.signature(adapter.launch)
         if not any(param.kind == inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values()):
             kwargs = {key: value for key, value in kwargs.items() if key in signature.parameters}

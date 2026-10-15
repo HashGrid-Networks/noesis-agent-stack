@@ -16,8 +16,10 @@ assigned to a narrowly privileged executor profile.
 | `app/registry.py` | Roster-backed profile registry (`profiles/noesis-roster.yaml` + `agents/*/agent.yaml`) |
 | `app/policy.py` | Deterministic refusals: assignment, risk, approval, dependency, evidence, staleness |
 | `app/store.py` | Append-only JSONL ledger, replayed on start |
+| `app/transport_contract.py` | Transport-neutral request/capability/progress/result/cancellation observations; never a state authority |
+| `app/launcher.py` | Native/local adapter and profile/process attestation boundary |
 | `app/control_plane.py` | `Orchestrator` and `CircuitBreaker` — the only component that mutates state |
-| `tests/` | 59 tests covering policy, lifecycle, schema conformance, and worked examples |
+| `tests/` | Policy, lifecycle, schema, native-conformance, and synthetic protocol-contract tests |
 
 ## Contracts
 
@@ -35,6 +37,35 @@ proposed -> approved -> queued -> claimed -> running
 
 Full transition table, approval gates, operator procedures, recovery, and
 emergency stop are documented in `WORKFLOWS.md` §5.
+
+## Transport-neutral adapter boundary
+
+`TransportRequest.from_task()` projects the existing authoritative
+`TaskContract` into a worker request while preserving task/correlation identity,
+attempt and epoch fences, worker/profile binding, approval state, scope, lease,
+budgets, provenance baseline, and acceptance criteria. The transport types do
+not persist or mutate lifecycle state. `TaskStore` and `Orchestrator` remain the
+single ledger and event authority; backend completion never implies Noesis
+acceptance.
+
+The native `HermesCliAdapter.launch_request()` maps this request back onto the
+existing launch path, so profile attestation, fallback denial, spawn gates,
+cleanup uncertainty, artifact collection, independent verification, and final
+acceptance retain their existing behavior. Usage and cost observations remain
+`None` when unknown; they are never coerced to zero.
+
+`tests/fixtures/fake_acp.py` is an in-memory, synthetic **Agent Client Protocol**
+fixture. It cannot access a model, credentials, network, subprocess, tools, or
+operational resources. Its `noesis-fake-acp/v1` method names and framing are
+pinned test assumptions, not claims about installed Hermes. In particular,
+wire framing, exact method names, continuation behavior, permission/cancellation
+acknowledgements, and general outbound ACP-client support remain unverified
+against installed Hermes. Passing these tests qualifies only the normalized
+contract and fake fixture—not a real ACP adapter or deployment.
+
+No at-most-once, at-least-once, or exactly-once delivery semantic is assumed.
+Duplicate reservations are suppressed, while restart ambiguity produces an
+explicit reconciliation-required result before any retry.
 
 ## Run the tests
 
