@@ -228,4 +228,8 @@ backups/
 
 # OMH runtime state (plan execution scratch — not source)
 .omh/state/
+
+# Agent development/run state (logs, locks, handoffs, snapshots)
+.claude/
+.no-amnesia/
 .DS_Store
