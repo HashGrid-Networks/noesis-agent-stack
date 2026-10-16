@@ -49,6 +49,7 @@ class _OfflineDouble:
     """Process/provider boundary. Does not perform inference."""
 
     supports_fallback_deny = True
+    requires_approved_pair = False  # Non-bounded adapter; skips enforcer gate
 
     def __init__(self) -> None:
         self.calls: list[list[str]] = []
@@ -105,7 +106,7 @@ def test_delivery_retry_is_distinct_from_execution_retry(tmp_path):
     idempotency_key returns the existing task without spawning.
     """
     runner = _OfflineDouble()
-    adapter = HermesCliAdapter(process_runner=runner)
+    adapter = HermesCliAdapter(process_runner=runner, requires_approved_pair=False)
     orch = Orchestrator(tmp_path / "tasks.jsonl", runtime_adapter=adapter, inference_enforcer=None)
 
     initial = runner.spawn_count
@@ -153,7 +154,7 @@ def test_wrong_task_id_on_assignee_rejected(tmp_path):
     carrying someone else's idempotency_key is dropped.
     """
     runner = _OfflineDouble()
-    adapter = HermesCliAdapter(process_runner=runner)
+    adapter = HermesCliAdapter(process_runner=runner, requires_approved_pair=False)
     orch = Orchestrator(tmp_path / "tasks.jsonl", runtime_adapter=adapter, inference_enforcer=None)
     orch.route_and_launch(**_kwargs(tmp_path, idempotency_key="binding:1"))
 
@@ -205,7 +206,7 @@ def test_heartbeat_lost_does_not_imply_process_termination(tmp_path):
     event without mutating the task.
     """
     runner = _OfflineDouble()
-    adapter = HermesCliAdapter(process_runner=runner)
+    adapter = HermesCliAdapter(process_runner=runner, requires_approved_pair=False)
     orch = Orchestrator(tmp_path / "tasks.jsonl", runtime_adapter=adapter, inference_enforcer=None)
     result = orch.route_and_launch(**_kwargs(tmp_path, idempotency_key="heartbeat:1"))
     task = orch.store.get(result.task.task_id)
@@ -258,7 +259,7 @@ def test_retry_creates_separate_task_with_distinct_attempt(tmp_path):
     task has a distinct task_id.
     """
     runner = _OfflineDouble()
-    adapter = HermesCliAdapter(process_runner=runner)
+    adapter = HermesCliAdapter(process_runner=runner, requires_approved_pair=False)
     orch = Orchestrator(tmp_path / "tasks.jsonl", runtime_adapter=adapter, inference_enforcer=None)
     first = orch.route_and_launch(**_kwargs(tmp_path, idempotency_key="retry-budget:1"))
     prior_task = orch.store.get(first.task.task_id)

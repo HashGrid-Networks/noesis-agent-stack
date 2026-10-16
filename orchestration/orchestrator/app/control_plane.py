@@ -11,6 +11,7 @@ already-running work is left to its lease and swept normally.
 
 from __future__ import annotations
 
+import hashlib
 import inspect
 import json
 import math
@@ -44,10 +45,19 @@ from app.models import (
 )
 from app.planning import PlanRequest, PlanTask, PlanningBlocked, RoutePlanner
 from app.policy import DispatchDecision, PolicyViolation
+from app.specialist_decision import (
+    CandidateInput,
+    DecisionConfig,
+    DecisionLayer,
+    DecisionMode,
+    DeterministicProvider,
+    FallbackReason,
+)
 from app.specialist_routing import (
     CapabilityIndex,
     GraphNode,
     RoutingBlocked,
+    SelectionDecision,
     SpecialistGraph,
     SpecialistRouteResult,
     depth_exceeded,
@@ -119,19 +129,31 @@ class Orchestrator:
         capability_index: CapabilityIndex | None = None,
         runtime_adapter: RuntimeAdapter | None = None,
         routing_event_log_path: Path | str | None = None,
+        decision_layer: DecisionLayer | None = None,
+        decision_layer_config: DecisionConfig | None = None,
     ) -> None:
         self.store = TaskStore(ledger_path)
         self.breaker = CircuitBreaker(failure_threshold=failure_threshold)
         self._restore_breaker_state()
+        # Track whether the caller explicitly provided an enforcer. When None is
+        # passed explicitly, do not fall back to an environment-derived enforcer —
+        # that preserves the caller's intent (no enforcement) and ensures G1's
+        # "enforcer_unavailable" check fires correctly in bounded test fixtures.
+        self._enforcer_was_explicit = inference_enforcer is not None
         if inference_enforcer is not None:
             self.inference_enforcer = inference_enforcer
-        else:
+        elif inference_enforcer_config is not None:
+            # Config was explicitly provided; create from that config.
             try:
                 self.inference_enforcer = InferenceRoutingEnforcer(inference_enforcer_config)
             except Exception:
                 # In observe-capable deployments the orchestrator must still boot;
                 # enforcement modes will fail closed on dispatch if no policy loads.
                 self.inference_enforcer = None
+        else:
+            # inference_enforcer=None and inference_enforcer_config=None
+            # were both passed explicitly; honour the caller's intent — no enforcer.
+            self.inference_enforcer = None
         self._inference_routing_context = dict(inference_routing_context or {})
         self.runtime_adapter = runtime_adapter or HermesCliAdapter()
         self.capability_index = capability_index or CapabilityIndex.from_repo(adapter=self.runtime_adapter)
@@ -141,6 +163,19 @@ class Orchestrator:
             self.runtime_adapter,
             ledger=self.store.ledger_path.parent / "plans.jsonl",
         )
+        # The decision layer is a bounded, default-OFF advisor between
+        # the deterministic baseline (CapabilityIndex.select) and the
+        # launch boundary. The default instance uses
+        # DeterministicProvider (which abstains) and OFF mode, so the
+        # wiring is invisible to existing callers when no layer is
+        # provided.
+        if decision_layer is not None:
+            self._decision_layer: DecisionLayer = decision_layer
+        else:
+            self._decision_layer = DecisionLayer(
+                provider=DeterministicProvider(),
+                config=decision_layer_config or DecisionConfig(),
+            )
 
     # ------------------------------------------------------- specialist route --
 
@@ -188,6 +223,7 @@ class Orchestrator:
         approved_model: str | None = None,
         workspace: str | None = None,
         expected_epoch: int | None = None,
+        decision_layer: DecisionLayer | None = None,
     ) -> SpecialistRouteResult:
         """End-to-end specialist route through the live orchestrator entrypoint.
 
@@ -218,6 +254,60 @@ class Orchestrator:
         selected = selection.selected
         if selected.profile_id == self.profile_name:
             raise RoutingBlocked("self_delegation_blocked", "noesis-orchestrator is not an ordinary worker target")
+        # Apply the bounded, default-OFF decision layer between the
+        # deterministic baseline (CapabilityIndex.select) and the
+        # launch gate. The decision layer never authorizes a launch,
+        # never mutates the task, and never changes a risk tier; it
+        # can only, in ACTIVE mode on tied eligible candidates,
+        # substitute the profile. The default ``DeterministicProvider``
+        # abstains on every call and OFF mode is the wiring default,
+        # so this is invisible when no ``decision_layer`` override is
+        # provided.
+        active_layer = decision_layer or self._decision_layer
+        tied = self._tied_candidates(selection)
+        decision_outcome = active_layer.decide(
+            baseline_candidate_id=selected.profile_id,
+            tied_candidates=tied,
+            required_capability=selection.classification.required_capability,
+            classification=selection.classification.task_class,
+            risk_tier=risk_tier,
+            candidate_records=self._build_decision_candidate_records(tied),
+            registry_digest=self._stable_registry_digest(),
+            policy_digest=self._stable_policy_digest(inference_routing_context),
+            rubric_digest=self._stable_rubric_digest(verification),
+            snapshot_digest=self._stable_snapshot_digest(selection),
+            question=intent,
+            correlation_id=str(correlation_id) if correlation_id else "",
+            task_id=str(uuid4()),
+            attempt_id="1",
+            requested_model=getattr(selected, "model_id", None),
+        )
+        if (
+            decision_outcome.mode is DecisionMode.ACTIVE
+            and decision_outcome.fallback_reason is FallbackReason.OK
+            and decision_outcome.applied_candidate_id is not None
+            and decision_outcome.applied_candidate_id
+            != decision_outcome.baseline_candidate_id
+        ):
+            # Only rerank within the tied eligible set; the decision
+            # layer's invariant is that ``in_scope`` is built only
+            # from those candidates, so any substitution is by
+            # construction inside the set the host already accepted.
+            new_record = self.capability_index.record(
+                decision_outcome.applied_candidate_id
+            )
+            if new_record is not None and new_record.profile_id in tied:
+                selection = SelectionDecision(
+                    classification=selection.classification,
+                    selected=new_record,
+                    candidates=selection.candidates,
+                    reason=(
+                        f"decision-layer ACTIVE rerank: "
+                        f"{selected.profile_id} -> {new_record.profile_id}"
+                    ),
+                    fallback_reason=selection.fallback_reason,
+                )
+                selected = selection.selected
         labels = [selection.classification.task_class]
         task_capability = selection.classification.required_capability
         if selected.profile_id == "coder" and task_capability == "code_modify":
@@ -476,19 +566,40 @@ class Orchestrator:
         bounded = bool(getattr(self.runtime_adapter, "requires_approved_pair", False))
         if bounded and (not approved_provider or not approved_model):
             raise RoutingBlocked("missing_approved_pair", "explicit approved provider/model pair is required")
+        if bounded and self.inference_enforcer is None:
+            raise RoutingBlocked(
+                "enforcer_unavailable",
+                "inference routing enforcer is not available; bounded non-dry-run launch is not permitted",
+            )
+        # Epoch check must fire before the enforcer evaluates, so that a missing
+        # epoch is caught regardless of enforcer outcome (G4 repair).
+        if bounded and expected_epoch is None:
+            raise RoutingBlocked(
+                "epoch_required",
+                "expected_epoch is required for bounded non-dry-run launches to prevent stale assignment reuse",
+            )
         if bounded and self.inference_enforcer is not None:
             decision = self.inference_enforcer.evaluate(self._routing_context_for_task(task))
+            # Validate resolved lane/model first, regardless of allow/deny outcome.
+            # This catches the G3 case where the enforcer returns allowed=False
+            # (unknown_lane) but we still need to surface the lane/model mismatch.
+            resolved_lane = getattr(decision, "resolved_lane", None)
+            resolved_model = getattr(decision, "resolved_model", None)
+            if resolved_lane and resolved_lane != approved_provider:
+                raise RoutingBlocked("unapproved_pair", f"policy-resolved lane '{resolved_lane}' != approved provider '{approved_provider}'")
+            if resolved_model and resolved_model != approved_model:
+                raise RoutingBlocked("unapproved_pair", f"policy-resolved model '{resolved_model}' != approved model '{approved_model}'")
             if not decision.allowed:
                 raise RoutingBlocked(
                     "inference_denied",
                     f"{getattr(decision, 'reason_code', 'denied')}: {getattr(decision, 'reason', '')}",
                 )
-            decided_provider = getattr(decision, "provider", None)
-            decided_model = getattr(decision, "model", None)
-            if decided_provider and decided_provider != approved_provider:
-                raise RoutingBlocked("unapproved_pair", "requested provider is not the policy-approved pair")
-            if decided_model and decided_model != approved_model:
-                raise RoutingBlocked("unapproved_pair", "requested model is not the policy-approved pair")
+            # Observe-mode decisions do not authorize bounded non-dry-run execution
+            if decision.decision in ("observe_allow", "observe_deny"):
+                raise RoutingBlocked(
+                    "observe_mode_not_authorizing",
+                    f"observe-mode decision ({decision.decision}) does not authorize bounded launch",
+                )
         root = Path(workspace).resolve() if workspace else self.store.ledger_path.parent.resolve()
         if root.is_symlink() or not root.is_dir() or root.stat().st_uid != os.getuid():
             raise RoutingBlocked("workspace_unowned", f"workspace {root} is not an owned directory")
@@ -646,6 +757,78 @@ class Orchestrator:
         return SpecialistGraph(tuple(nodes), bounded=True, max_fanout=max_fanout)
 
     # ------------------------------------------------------------------ plan --
+
+    def _tied_candidates(
+        self, selection: SelectionDecision
+    ) -> list[str]:
+        """Profile ids of candidates tied at the best deterministic score.
+
+        Mirrors the decision layer's tie set: profiles that share the
+        top score and are eligible. Order is the natural registry order
+        because ``selection.candidates`` is already sorted by score in
+        CapabilityIndex.select().
+        """
+        candidates = list(selection.candidates)
+        if not candidates:
+            return []
+        best_score = candidates[0].score
+        return [
+            c.profile_id
+            for c in candidates
+            if c.eligible and c.score == best_score
+        ]
+
+    def _build_decision_candidate_records(
+        self, profile_ids: list[str]
+    ) -> dict[str, CandidateInput]:
+        """Map a list of profile ids to ``CandidateInput`` records.
+
+        The decision layer expects a ``candidate_records`` mapping of
+        the eligible tied set; we build it from the live capability
+        index so the provider can observe every cap / mandate before
+        scoring. Missing records are silently dropped: they do not
+        contribute to the decision.
+        """
+        records: dict[str, CandidateInput] = {}
+        for cid in profile_ids:
+            rec = self.capability_index.record(cid)
+            if rec is None:
+                continue
+            records[cid] = CandidateInput(
+                candidate_id=cid,
+                capabilities=tuple(rec.capabilities),
+                mandate=str(rec.responsibilities or rec.role or cid),
+            )
+        return records
+
+    def _stable_digest(self, payload: Any) -> str:
+        """Stable SHA-256 of a JSON-serializable payload."""
+        return hashlib.sha256(
+            json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()
+
+    def _stable_registry_digest(self) -> str:
+        return self._stable_digest(sorted(self.capability_index.records.keys()))
+
+    def _stable_policy_digest(
+        self, routing_context: dict[str, Any] | None
+    ) -> str:
+        return self._stable_digest(routing_context or {})
+
+    def _stable_rubric_digest(self, verification: Verification) -> str:
+        try:
+            rendered = asdict(verification)
+        except Exception:
+            rendered = str(verification)
+        return self._stable_digest(rendered)
+
+    def _stable_snapshot_digest(self, selection: SelectionDecision) -> str:
+        return self._stable_digest(
+            [
+                (c.profile_id, c.score, bool(c.eligible))
+                for c in selection.candidates
+            ]
+        )
 
     def propose(
         self,

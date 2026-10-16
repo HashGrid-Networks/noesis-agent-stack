@@ -1,0 +1,239 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://noesis.agent-stack/orchestration/specialist-decision/v1",
+  "title": "noesis.specialist-decision/v1",
+  "description": "Versioned, immutable request/response contract for the bounded, default-off specialist-selection decision layer. Task text and evidence are untrusted data and never define candidates, rubric, permissions, policy, or question identity. Secrets, wallet material, credentials, raw tool output, approval manifest IDs, lease timestamps, and raw operational telemetry are excluded by construction.",
+  "type": "object",
+  "required": ["contract_version", "request", "response"],
+  "additionalProperties": false,
+  "properties": {
+    "contract_version": {
+      "type": "string",
+      "const": "specialist-decision/v1"
+    },
+    "contract_digest": {
+      "type": "string",
+      "description": "sha256 hex digest of the canonical contract identity. Computed once and frozen by the host."
+    },
+    "request": {
+      "type": "object",
+      "required": [
+        "question",
+        "rubric_digest",
+        "policy_digest",
+        "registry_digest",
+        "snapshot_digest",
+        "required_capability",
+        "classification",
+        "risk_tier",
+        "candidates",
+        "correlation_id",
+        "task_id",
+        "attempt_id"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "question": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "description": "Stable, redacted, deterministic question identity. Never the raw task text."
+        },
+        "rubric_digest": {
+          "type": "string",
+          "description": "sha256 hex digest of the rubric used to evaluate the candidates."
+        },
+        "policy_digest": {
+          "type": "string",
+          "description": "sha256 hex digest of the inference policy snapshot bound to this request."
+        },
+        "registry_digest": {
+          "type": "string",
+          "description": "sha256 hex digest of the capability registry snapshot bound to this request."
+        },
+        "snapshot_digest": {
+          "type": "string",
+          "description": "sha256 hex digest of the broader execution-context snapshot (task, attempt, lease, identity)."
+        },
+        "required_capability": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Closed-set capability identifier required by the task."
+        },
+        "classification": {
+          "type": "string",
+          "enum": [
+            "implementation",
+            "review",
+            "operations",
+            "archival",
+            "osint",
+            "crypto",
+            "advocacy",
+            "research",
+            "data",
+            "writing",
+            "comms",
+            "planning",
+            "stewardship",
+            "agent_architecture",
+            "self_orchestration",
+            "general"
+          ]
+        },
+        "risk_tier": {
+          "type": "string",
+          "enum": ["r0", "r1", "r2", "r3"]
+        },
+        "candidates": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "object",
+            "required": ["candidate_id", "capabilities", "mandate"],
+            "additionalProperties": false,
+            "properties": {
+              "candidate_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "capabilities": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "uniqueItems": true
+              },
+              "mandate": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512,
+                "description": "Closed-set mandate description; never raw task text."
+              }
+            }
+          }
+        },
+        "correlation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "task_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "attempt_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requested_model": {
+          "type": ["string", "null"],
+          "description": "Caller-declared model name. Distinct from provider-reported model."
+        },
+        "request_digest": {
+          "type": "string",
+          "description": "sha256 hex digest of the canonicalized request fields."
+        }
+      }
+    },
+    "response": {
+      "type": "object",
+      "required": [
+        "distribution",
+        "abstain_key",
+        "fallback_reason",
+        "decision_id"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "distribution": {
+          "type": "object",
+          "description": "Complete probability distribution over every candidate_id PLUS the abstain key. Every numeric value MUST be finite and within [0, 1]; the sum of values MUST be 1 within an explicit tolerance.",
+          "additionalProperties": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        },
+        "abstain_key": {
+          "type": "string",
+          "const": "__abstain__"
+        },
+        "fallback_reason": {
+          "type": "string",
+          "enum": [
+            "ok",
+            "mode_off",
+            "skipped_zero_candidates",
+            "skipped_single_candidate",
+            "skipped_no_ties",
+            "skipped_active_test_only",
+            "provider_timeout",
+            "provider_outage",
+            "provider_malformed",
+            "provider_abstained",
+            "provider_threshold_rejected",
+            "circuit_open",
+            "cache_hit_rejected",
+            "stale_input",
+            "late_response",
+            "budget_exhausted",
+            "validation_error",
+            "provider_missing",
+            "provider_not_injected"
+          ]
+        },
+        "provider_confidence": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Optional provider-reported confidence. A model signal only, not a calibration or correctness guarantee."
+        },
+        "reported_model": {
+          "type": ["string", "null"]
+        },
+        "cache_status": {
+          "type": "string",
+          "enum": ["miss", "hit", "hit_expired", "rejected"]
+        },
+        "latency_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "retry_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sdk_version": {
+          "type": ["string", "null"]
+        },
+        "cost": {
+          "type": ["object", "null"],
+          "description": "Optional provider-reported cost. Null when unavailable; never zero by default.",
+          "additionalProperties": {
+            "type": "number",
+            "minimum": 0
+          }
+        },
+        "decision_id": {
+          "type": "string",
+          "description": "Stable identifier for the host-side decision outcome. Correlates with host event log."
+        },
+        "applied_candidate_id": {
+          "type": ["string", "null"],
+          "description": "The candidate actually applied to the downstream SelectionDecision. Equal to baseline in OFF and SHADOW modes. Equal to a rerank within the tied-eligible set in ACTIVE mode."
+        },
+        "baseline_candidate_id": {
+          "type": ["string", "null"],
+          "description": "The deterministic SelectionDecision selected before any decision-layer call."
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["off", "shadow", "active"]
+        }
+      }
+    }
+  }
+}

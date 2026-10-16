@@ -1,0 +1,9 @@
+# Pinned optional dependency for the bounded Jev / TypeSafe adapter.
+# Only the optional typesafe_decision_adapter module imports this
+# package. The default-off deterministic path (decision_mode=off) does
+# not require it and runs without the package installed.
+#
+# Pin the exact series so a future major release cannot be silently
+# substituted. The adapter asserts typesafe_sdk.__version__ starts with
+# "0.7.5" before constructing any client.
+typesafe-sdk==0.7.5

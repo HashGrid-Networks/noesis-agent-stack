@@ -117,7 +117,12 @@ def _adapter(tmp_path: Path, runner: OfflineProcessDouble | None = None) -> Herm
     for name in ("noesis-forge", "noesis-architect", "noesis-signal"):
         (profiles / name).mkdir(parents=True, exist_ok=True)
         (profiles / name / "SOUL.md").write_text(f"name: {name}\n", encoding="utf-8")
-    adapter = HermesCliAdapter(hermes_bin="hermes", profiles_root=profiles, process_runner=runner)
+    adapter = HermesCliAdapter(
+        hermes_bin="hermes",
+        profiles_root=profiles,
+        process_runner=runner,
+        requires_approved_pair=False,  # Non-bounded for isolated unit tests
+    )
     return adapter
 
 

@@ -318,11 +318,13 @@ class HermesCliAdapter:
         hermes_bin: str = "hermes",
         profiles_root: Path | None = None,
         process_runner: Any | None = None,
+        requires_approved_pair: bool = True,
     ) -> None:
         self.hermes_bin = hermes_bin
         self.profiles_root = profiles_root or Path.home() / ".hermes" / "profiles"
         self.hermes_home = self.profiles_root.parent
         self.process_runner = process_runner
+        self.requires_approved_pair = requires_approved_pair
 
     def _env(self) -> dict[str, str]:
         """Resolve sibling profiles from the base Hermes home, never ambient inference."""
