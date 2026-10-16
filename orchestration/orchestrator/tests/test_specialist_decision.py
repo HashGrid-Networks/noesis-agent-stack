@@ -208,9 +208,9 @@ def _decide_kwargs() -> dict:
 
 
 class TestOffMode:
-    def test_default_mode_is_off(self) -> None:
+    def test_default_mode_is_shadow(self) -> None:
         layer = DecisionLayer(provider=_RecordingProvider())
-        assert layer.mode is DecisionMode.OFF
+        assert layer.mode is DecisionMode.SHADOW
 
     def test_off_mode_never_calls_provider(self) -> None:
         provider = _RecordingProvider()

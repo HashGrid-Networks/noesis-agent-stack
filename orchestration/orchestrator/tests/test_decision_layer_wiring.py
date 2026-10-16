@@ -173,19 +173,25 @@ def _call_kwargs(records: dict[str, _StubRecord]) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def test_default_decision_layer_is_off_and_idle() -> None:
-    """The orchestrator's default layer is OFF + abstaining provider."""
+def test_default_decision_layer_is_shadow_with_abstain_provider() -> None:
+    """The orchestrator's default layer is SHADOW + DeterministicProvider.
+
+    In SHADOW mode the provider is called and a recommendation is returned,
+    but the baseline candidate is always preserved (no live routing changes).
+    """
     orch = Orchestrator()
     assert isinstance(orch._decision_layer, DecisionLayer)
-    assert orch._decision_layer.mode is DecisionMode.OFF
+    assert orch._decision_layer.mode is DecisionMode.SHADOW
     assert orch._decision_layer.provider_name == "deterministic-abstain"
 
     records = _two_records()
     outcome = orch._decision_layer.decide(**_call_kwargs(records))
-    assert outcome.mode is DecisionMode.OFF
-    assert outcome.fallback_reason is FallbackReason.MODE_OFF
+    assert outcome.mode is DecisionMode.SHADOW
+    # Provider abstains → baseline is preserved, no routing change
+    assert outcome.fallback_reason is FallbackReason.PROVIDER_ABSTAINED
     assert outcome.applied_candidate_id == "noesis-forge"
-    assert outcome.recommendation is None
+    # SHADOW still returns the recommendation for observation
+    assert outcome.recommendation is not None
 
 
 def test_injected_decision_layer_overrides_default() -> None:

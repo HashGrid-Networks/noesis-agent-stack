@@ -290,7 +290,7 @@ class DecisionOutcome:
 
 @dataclass(frozen=True)
 class DecisionConfig:
-    mode: DecisionMode = DecisionMode.OFF
+    mode: DecisionMode = DecisionMode.SHADOW  # DEFAULT ON — SHADOW logs, baseline is still used
     advisory_deadline_s: float = 0.75
     max_concurrency: int = 2
     circuit_failure_threshold: int = 3
