@@ -38,7 +38,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
-import yaml
+from app import _yaml_compat as yaml
 
 # The five typed outcomes required by the proposal. Anything else must fail
 # closed rather than coerce a label.

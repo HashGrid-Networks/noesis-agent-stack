@@ -259,7 +259,7 @@ class DeterministicProfileAuditor:
         roster_path = self.repo_root / "profiles" / "noesis-roster.yaml"
         if not roster_path.is_file():
             return
-        import yaml
+        from app import _yaml_compat as yaml
 
         roster = yaml.safe_load(roster_path.read_text(encoding="utf-8")) or {}
         profiles = roster.get("profiles") or {}
@@ -308,7 +308,7 @@ class DeterministicProfileAuditor:
         that are missing from the agent registry's ``profiles`` block
         produce a typed drift finding. The auditor never writes to either.
         """
-        import yaml
+        from app import _yaml_compat as yaml
 
         roster_path = self.repo_root / "profiles" / "noesis-roster.yaml"
         agents_path = self.repo_root / "platform" / "agent-registry.yaml"
@@ -350,7 +350,7 @@ class DeterministicProfileAuditor:
         Detects missing required keys (``role``, ``tier``) at the manifest
         level. It is deterministic: same inputs produce same findings.
         """
-        import yaml
+        from app import _yaml_compat as yaml
 
         roster_path = self.repo_root / "profiles" / "noesis-roster.yaml"
         if not roster_path.is_file():
