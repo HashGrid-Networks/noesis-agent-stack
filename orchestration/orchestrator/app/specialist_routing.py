@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import UUID
 
-import yaml
+from app import _yaml_compat as yaml
 
 from app import registry
 from app.launcher import HermesCliAdapter, LaunchResult, RuntimeAdapter

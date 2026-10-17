@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import yaml
+from app import _yaml_compat as yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 

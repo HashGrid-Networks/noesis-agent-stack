@@ -21,7 +21,7 @@ import functools
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import yaml
+from app import _yaml_compat as yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 ROSTER_PATH = REPO_ROOT / "profiles" / "noesis-roster.yaml"
