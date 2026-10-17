@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
+from app.adaptive_specialist import EvidenceShape
 from app.models import (
     Approval,
     Delegation,
@@ -58,40 +59,73 @@ class ReplayError(RuntimeError):
 
 def _coerce_preflight_evidence(
     raw: Any,
-) -> dict[int, list[dict[str, Any]]] | None:
+) -> tuple["EvidenceShape", dict[int, list[dict[str, Any]]] | None]:
     """Rehydrate ``preflight_evidence`` to the keyed-per-epoch shape.
 
-    JSON serialises ``int`` keys as ``str``; coerce them back. A legacy
-    flat-dict record (the pre-B1 schema) is wrapped under the sentinel
-    epoch ``0`` so the existing record stays discoverable without losing
-    replay fidelity. ``None`` and missing keys remain ``None``.
+    Returns a ``(shape, dict | None)`` tuple where ``shape`` is one of:
+
+    *   ``EvidenceShape.VALID`` — a per-epoch shape with one or more
+        buckets, each a list of well-formed envelopes.
+    *   ``EvidenceShape.LEGACY_ABSENT`` — ``None`` or an empty dict, the
+        canonical "no preflight has ever run" signal. Allowed only for
+        tasks that were admitted before the B2 contract was merged; new
+        governed-dispatch tasks carrying this shape are blocked at the
+        dispatcher gate, not here.
+    *   ``EvidenceShape.INVALID`` — a present value that is not a
+        well-formed per-epoch shape. The dispatcher maps this to a
+        typed ``PolicyViolation("invalid_preflight_evidence", ...)``.
+
+    Each envelope is validated: ``attempt_epoch`` keys must be integers
+    (the JSON round-trip coerces string keys back to ``int``), the value
+    under each key must be a list, and each entry must be a dict. A
+    malformed envelope raises ``ValueError`` so the caller can surface a
+    typed blocker. ``bundle_digest``/``evidence_digest`` are required
+    fields on every envelope; a missing or empty digest fails closed.
     """
     if raw is None:
-        return None
+        return EvidenceShape.LEGACY_ABSENT, None
     if not isinstance(raw, dict):
-        return None
+        return EvidenceShape.INVALID, None
+    if not raw:
+        # An empty dict is the legacy-absent shape; the canonical
+        # ``None`` and the empty-dict form are both treated as
+        # legacy-absent at the rehydrate boundary so a pre-B2 record
+        # remains discoverable.
+        return EvidenceShape.LEGACY_ABSENT, None
     out: dict[int, list[dict[str, Any]]] = {}
     for key, value in raw.items():
-        # Legacy single-envelope record: a plain dict under the key
-        # ``"legacy"`` or any non-int / non-numeric key. Wrap under ``0``.
-        if isinstance(value, dict) and "decision" in value:
-            out.setdefault(0, []).append(value)
-            continue
         # Modern per-epoch shape: int key (or numeric string from JSON),
         # value is a list of evidence dicts.
         try:
             epoch = int(key)
         except (TypeError, ValueError):
-            return None
+            return EvidenceShape.INVALID, None
         if not isinstance(value, list):
-            return None
+            return EvidenceShape.INVALID, None
         normalised: list[dict[str, Any]] = []
         for entry in value:
             if not isinstance(entry, dict):
-                return None
+                return EvidenceShape.INVALID, None
+            # B2 §3.2: the envelope's ``attempt_epoch`` must agree with
+            # the bucket key. Mismatches are ambiguous and fail closed.
+            envelope_epoch = entry.get("attempt_epoch")
+            if envelope_epoch is not None:
+                try:
+                    envelope_epoch_int = int(envelope_epoch)
+                except (TypeError, ValueError):
+                    return EvidenceShape.INVALID, None
+                if envelope_epoch_int != epoch:
+                    return EvidenceShape.INVALID, None
+            # B2 §3.2: ``bundle_digest`` and ``evidence_digest`` are
+            # required on every envelope. Their absence is not a
+            # silent migration opportunity.
+            for required_digest in ("bundle_digest", "evidence_digest"):
+                digest = entry.get(required_digest)
+                if not isinstance(digest, str) or len(digest) < 8:
+                    return EvidenceShape.INVALID, None
             normalised.append(entry)
         out[epoch] = normalised
-    return out
+    return EvidenceShape.VALID, out
 
 
 def _parse_dt(value: str | None) -> datetime | None:
@@ -336,8 +370,19 @@ class TaskStore:
         # recorded under the sentinel epoch ``0`` to keep it discoverable
         # without losing replay fidelity. ``None`` (or a missing key)
         # remains the canonical "no preflight has ever run" signal.
+        # B2 (contract §3.2): ``_coerce_preflight_evidence`` returns a
+        # typed ``(EvidenceShape, dict | None)`` verdict. ``LEGACY_ABSENT``
+        # is preserved as ``None`` so a pre-B2 record remains
+        # discoverable; ``INVALID`` raises so a present-but-broken
+        # envelope cannot silently be reinterpreted as legacy absence.
         raw_evidence = data.get("preflight_evidence")
-        task.preflight_evidence = _coerce_preflight_evidence(raw_evidence)
+        evidence_shape, evidence_dict = _coerce_preflight_evidence(raw_evidence)
+        if evidence_shape is EvidenceShape.INVALID:
+            raise ReplayError(
+                "malformed preflight_evidence (legacy_absent is not a "
+                "silent substitute for a present invalid envelope)"
+            )
+        task.preflight_evidence = evidence_dict
         raw_version = data.get("task_version", 0)
         if raw_version is None:
             raw_version = 0

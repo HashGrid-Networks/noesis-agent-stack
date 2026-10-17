@@ -10,11 +10,19 @@ reads credentials, and never performs inference or subprocess operations.
 The pre-send attestation in ``app/launcher.py`` already calls into this
 module before any real launch; the present class makes that contract
 executable and testable.
+
+B2 (contract §3.6): the allowlist refuses secret-bearing files at
+construction. The pattern set is the union of the operator-published
+secret filenames (``**/secret*``, ``**/.env*``, ``**/*credential*``)
+and any path the caller explicitly marks sensitive. A
+``ProfileManifest`` declares its own sensitive path set so the allowlist
+is closed against the source, not just the operator's heuristics.
 """
 from __future__ import annotations
 
 import hashlib
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -25,6 +33,16 @@ from typing import Iterable
 # orchestration code can extend it case-by-case via
 # ``approved_files=...``.
 _DEFAULT_APPROVED_IDENTITY_FILES = ("SOUL.md", "config.yaml", "honcho.json")
+
+
+# B2 (contract §3.6): the canonical secret-pattern set. Any filename
+# matching one of these patterns cannot enter the allowlist at construction.
+# The auditor's "no secret capture" test must pass against the actual
+# allowed-file set, so the patterns are evaluated against the file
+# basename (``Path.name``).
+_SECRET_PATTERN = re.compile(
+    r"(?i)(^|.*/)(secret.*|\.env.*|.*credential.*|.*id_rsa.*|.*\.pem.*|.*\.key.*)"
+)
 
 
 class AttemptHomeError(RuntimeError):
@@ -94,6 +112,7 @@ class IsolatedAttemptHome:
         source_root: Path,
         destination_root: Path,
         approved_files: Iterable[str] = _DEFAULT_APPROVED_IDENTITY_FILES,
+        sensitive_patterns: Iterable[str] | None = None,
     ) -> None:
         self.profile_id = str(profile_id)
         self.source_root = Path(source_root)
@@ -112,13 +131,27 @@ class IsolatedAttemptHome:
                     "unapproved_extra_files",
                     f"approved_files entries must be plain filenames; got {name!r}",
                 )
+            # B2 §3.6: secret-bearing configuration files cannot enter
+            # the allowlist. The pattern is evaluated against the file
+            # basename; matches are typed errors so callers cannot
+            # accidentally smuggle credentials into the launched home.
+            if _SECRET_PATTERN.match(name):
+                raise AttemptHomeError(
+                    "secret_in_allowlist",
+                    f"approved_files entry {name!r} matches the secret pattern",
+                )
             cleaned.append(name)
         if not cleaned:
             raise AttemptHomeError(
                 "empty_allowlist", "approved_files must contain at least one filename"
             )
         self._approved_files: tuple[str, ...] = tuple(cleaned)
+        self._sensitive_patterns: tuple[str, ...] = tuple(sensitive_patterns or ())
         self._materialised_digest: IsolatedAttemptHomeDigest | None = None
+        # Source-digest taken at the start of materialisation. ``attest``
+        # re-reads the source bytes and refuses if they drifted; this is
+        # the §3.6 "source changes during materialization" check.
+        self._materialise_source_digest: str | None = None
 
     @property
     def approved_files(self) -> tuple[str, ...]:
@@ -142,14 +175,77 @@ class IsolatedAttemptHome:
         Files not on the allowlist are NOT copied. The destination is
         created if missing. If the destination exists from an earlier run
         it is overwritten file-by-file, never wholesale.
+
+        B2 (contract §3.6) hardening: source symlinks, destination
+        symlinks (including dangling links), destination contamination,
+        and source-digest drift are all detected and refused with a
+        typed :class:`AttemptHomeError`.
         """
         if not self.source_root.is_dir():
             raise AttemptHomeError(
                 "source_not_found",
                 f"source root {self.source_root} is not an owned directory",
             )
+        # B2 §3.6: the source root itself must not be a symlink. A
+        # symlinked source can route the allowlist to attacker-controlled
+        # bytes; the auditor and the dispatcher must see the same
+        # canonical path.
+        if self.source_root.is_symlink():
+            raise AttemptHomeError(
+                "symlink_rejected",
+                f"source root {self.source_root} is a symlink; refusing copy",
+            )
+        # B2 §3.6: a destination symlink (or a parent-directory
+        # symlink) can redirect the materialised bytes to an
+        # attacker-controlled tree. Refuse before any write.
+        # ``os.path.lexists`` returns True for both live and dangling
+        # symlinks; ``Path.exists`` returns False for dangling ones.
+        if os.path.lexists(str(self.destination_root)) and (
+            self.destination_root.is_symlink() or os.path.islink(self.destination_root)
+        ):
+            raise AttemptHomeError(
+                "symlink_rejected",
+                f"destination {self.destination_root} is a symlink; refusing materialise",
+            )
+        parent = self.destination_root.parent
+        # Walk up the parent chain looking for a symlinked ancestor.
+        # The check stops at ``source_root`` (which we already vetted)
+        # or at filesystem root.
+        ancestor = parent
+        while ancestor not in (self.source_root, Path(ancestor.root or "/")):
+            if ancestor.is_symlink():
+                raise AttemptHomeError(
+                    "symlink_rejected",
+                    f"destination parent {ancestor} is a symlink; refusing materialise",
+                )
+            if ancestor.parent == ancestor:
+                break
+            ancestor = ancestor.parent
+
+        # B2 §3.6: destination contamination — refuse to materialise on
+        # top of an existing non-empty tree that contains files outside
+        # the allowlist. The previous "overwrite file-by-file" semantics
+        # left stale leftovers discoverable; the contract requires that
+        # the destination only ever contain files in the allowlist.
+        if self.destination_root.is_dir():
+            existing = sorted(
+                p.name for p in self.destination_root.iterdir() if not p.name.endswith(".tmp")
+            )
+            extras = [name for name in existing if name not in self._approved_files]
+            if extras:
+                raise AttemptHomeError(
+                    "unapproved_extra_files",
+                    (
+                        f"destination {self.destination_root} contains "
+                        f"non-allowlisted files before materialise: {extras}"
+                    ),
+                )
+
         self.destination_root.mkdir(parents=True, exist_ok=True)
 
+        # B2 §3.6: take the source-digest snapshot at the start of
+        # materialisation so ``attest`` can detect source drift.
+        source_bytes_pre = b""
         file_digests: list[tuple[str, str]] = []
         for name in self._approved_files:
             src = self.source_root / name
@@ -158,19 +254,35 @@ class IsolatedAttemptHome:
                     "missing_approved_file",
                     f"source file {src} is not a regular file",
                 )
-            dst = self.destination_root / name
-            # Refuse symlinks in the source: identity-bearing files must be
-            # plain regular files so a symlink cannot smuggle a different
-            # payload into the launched profile.
-            if src.is_symlink() or dst.is_symlink() if dst.exists() else src.is_symlink():
+            # B2 §3.6: source-side symlinks (including dangling) must
+            # be rejected. A dangling link is a symlink whose target
+            # does not exist; the allowlist carries plain files only.
+            if src.is_symlink():
                 raise AttemptHomeError(
                     "symlink_rejected",
                     f"source file {src} is a symlink; refusing copy",
                 )
+            dst = self.destination_root / name
+            # B2 §3.6: destination-side symlinks (including dangling)
+            # must be rejected at every step. A dangling destination
+            # link would silently redirect the file write to an
+            # attacker-controlled location.
+            if dst.exists() or os.path.lexists(str(dst)):
+                if dst.is_symlink() or os.path.islink(dst):
+                    raise AttemptHomeError(
+                        "symlink_rejected",
+                        f"destination file {dst} is a symlink; refusing copy",
+                    )
             # Atomic per-file copy: write to a temp file in the same dir,
             # fsync, then rename. A crash mid-copy leaves the previous
             # file intact rather than a truncated one.
             tmp_path = dst.with_name(dst.name + ".tmp")
+            # The temp file must not be a symlink either.
+            if os.path.lexists(str(tmp_path)) and os.path.islink(tmp_path):
+                raise AttemptHomeError(
+                    "symlink_rejected",
+                    f"destination temp file {tmp_path} is a symlink; refusing copy",
+                )
             with open(src, "rb") as src_fh, open(tmp_path, "wb") as dst_fh:
                 data = src_fh.read()
                 dst_fh.write(data)
@@ -178,6 +290,9 @@ class IsolatedAttemptHome:
                 os.fsync(dst_fh.fileno())
             os.replace(tmp_path, dst)
             file_digests.append((name, hashlib.sha256(data).hexdigest()))
+            source_bytes_pre += data
+
+        self._materialise_source_digest = hashlib.sha256(source_bytes_pre).hexdigest()
 
         # Refuse to leave any non-allowlisted file already present in
         # the destination from a previous run. The launcher cannot tell
@@ -199,6 +314,10 @@ class IsolatedAttemptHome:
             (self.source_root / name).read_bytes() for name, _ in file_digests
         )
         source_digest = hashlib.sha256(source_bytes).hexdigest()
+        # B2 §3.6: the digest carries ``loaded_profile`` so the
+        # dispatcher can compare against the selected
+        # ``runtime_profile``; a mismatch raises a typed
+        # ``RoutingBlocked("loaded_profile_mismatch", ...)``.
         digest = IsolatedAttemptHomeDigest(
             profile_id=self.profile_id,
             sha256=sha,
@@ -216,14 +335,50 @@ class IsolatedAttemptHome:
         actually present at launch time must match the digest produced at
         materialisation (or the ``expected`` digest supplied explicitly).
         A mismatch raises :class:`AttemptHomeError` with a typed code.
+
+        B2 (contract §3.6): ``attest`` re-reads the source bytes and
+        refuses when they drifted between ``materialise`` and ``attest``.
+        The destination tree is re-walked so any non-allowlisted file
+        added between materialisation and attestation is caught.
         """
         file_digests: list[tuple[str, str]] = []
+        # B2 §3.6: source-digest re-check. If the source bytes
+        # changed since ``materialise``, the attestation cannot
+        # guarantee the launched home matches the originally
+        # materialised payload.
+        if self._materialise_source_digest is not None:
+            source_bytes_now = b""
+            for name in self._approved_files:
+                src = self.source_root / name
+                if not src.is_file() or src.is_symlink():
+                    raise AttemptHomeError(
+                        "source_drift",
+                        f"source file {src} changed or disappeared between materialise and attest",
+                    )
+                source_bytes_now += src.read_bytes()
+            current_source_digest = hashlib.sha256(source_bytes_now).hexdigest()
+            if current_source_digest != self._materialise_source_digest:
+                raise AttemptHomeError(
+                    "source_drift",
+                    "source bytes drifted between materialise and attest",
+                )
+
         for name in self._approved_files:
             dst = self.destination_root / name
             if not dst.is_file():
                 raise AttemptHomeError(
                     "missing_approved_file",
                     f"destination file {dst} is missing at attestation",
+                )
+            # B2 §3.6: destination-side symlinks (including dangling)
+            # are refused at attestation time too. ``os.path.islink``
+            # follows the link target's existence; ``Path.is_symlink``
+            # is similar. The combination catches both live and dangling
+            # destination links.
+            if os.path.islink(dst) or dst.is_symlink():
+                raise AttemptHomeError(
+                    "symlink_rejected",
+                    f"destination file {dst} is a symlink at attestation",
                 )
             data = dst.read_bytes()
             file_digests.append((name, hashlib.sha256(data).hexdigest()))
@@ -258,6 +413,12 @@ class IsolatedAttemptHome:
             raise AttemptHomeError(
                 "identity_mismatch",
                 "attestation called before materialise; refusing pre-send check",
+            )
+        if baseline.profile_id != fresh.profile_id:
+            raise AttemptHomeError(
+                "cross_profile_mismatch",
+                f"materialise bound profile_id '{baseline.profile_id}' but attest produced "
+                f"'{fresh.profile_id}'",
             )
         if (
             baseline.sha256 != fresh.sha256

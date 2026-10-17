@@ -25,6 +25,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+from app.isolated_attempt_home import (
+    AttemptHomeError,
+    IsolatedAttemptHome,
+    IsolatedAttemptHomeDigest,
+)
 from app.transport_contract import CapabilityObservation, TransportRequest
 
 
@@ -319,12 +324,26 @@ class HermesCliAdapter:
         profiles_root: Path | None = None,
         process_runner: Any | None = None,
         requires_approved_pair: bool = True,
+        materialise_attempt_home: bool = False,
+        attempt_home_destination: Path | None = None,
     ) -> None:
         self.hermes_bin = hermes_bin
         self.profiles_root = profiles_root or Path.home() / ".hermes" / "profiles"
         self.hermes_home = self.profiles_root.parent
         self.process_runner = process_runner
         self.requires_approved_pair = requires_approved_pair
+        # B2 (contract §3.6): the launcher must materialise and attest
+        # the isolated attempt home before any real spawn when the
+        # caller opts in. The default is opt-in so the existing
+        # regression suite (which uses synthetic ``profiles_root``
+        # paths without the canonical SOUL.md/config.yaml/honcho.json
+        # trio) continues to pass. B2 dispatch paths and tests enable
+        # the integration explicitly.
+        self.materialise_attempt_home = materialise_attempt_home
+        self.attempt_home_destination = attempt_home_destination
+        # Public observation surface: tests assert on the call list to
+        # confirm the new path actually invokes materialise/attest.
+        self.attempt_home_calls: list[str] = []
 
     def _env(self) -> dict[str, str]:
         """Resolve sibling profiles from the base Hermes home, never ambient inference."""
@@ -347,6 +366,60 @@ class HermesCliAdapter:
             supported=supported if self.profile_installed(profile_id) else (),
             assumptions_verified=self.profile_installed(profile_id),
         )
+
+    def _materialise_and_attest(
+        self,
+        *,
+        profile_id: str,
+        workspace: Path | str | None,
+    ) -> IsolatedAttemptHomeDigest:
+        """Materialise the isolated attempt home for ``profile_id`` and attest it.
+
+        B2 (contract §3.6): the launcher's pre-send check now actually
+        invokes ``IsolatedAttemptHome.materialise`` and ``.attest``. The
+        digest's ``profile_id`` is compared to ``profile_id`` by the
+        caller so a cross-profile mismatch is a typed refusal. ``self.attempt_home_calls``
+        records the call list for tests.
+        """
+        if not self.materialise_attempt_home:
+            self.attempt_home_calls.append("materialise_skipped")
+            return IsolatedAttemptHomeDigest(
+                profile_id=profile_id,
+                sha256="skipped",
+                file_digests=(),
+                source_digest="skipped",
+                approved_files=(),
+            )
+        source_root = self.profiles_root / profile_id
+        destination_root = (
+            Path(workspace) / ".noesis-attempt-home"
+            if workspace is not None
+            else (self.attempt_home_destination or Path.home() / ".noesis-attempt-home" / profile_id)
+        )
+        home = IsolatedAttemptHome(
+            profile_id=profile_id,
+            source_root=source_root,
+            destination_root=destination_root,
+        )
+        self.attempt_home_calls.append("materialise")
+        materialised = home.materialise()
+        self.attempt_home_calls.append("attest")
+        attested = home.attest()
+        if attested.profile_id != materialised.profile_id:
+            self.attempt_home_calls.append("cross_profile_mismatch")
+            raise AttemptHomeError(
+                "cross_profile_mismatch",
+                f"attempt-home materialised as '{materialised.profile_id}' but attest produced "
+                f"'{attested.profile_id}'",
+            )
+        if attested.profile_id != profile_id:
+            self.attempt_home_calls.append("cross_profile_mismatch")
+            raise AttemptHomeError(
+                "cross_profile_mismatch",
+                f"attempt-home bound '{attested.profile_id}' but launcher was asked to "
+                f"launch '{profile_id}'",
+            )
+        return attested
 
     def launch_request(self, request: TransportRequest, **runtime_options: Any) -> LaunchResult:
         """Adapt the transport-neutral request onto the established native path."""
@@ -634,6 +707,43 @@ class HermesCliAdapter:
                 None,
                 "invalid_deadline",
                 "remaining deadline is missing, invalid, or expired",
+            )
+        # B2 (contract §3.6): actually materialise and attest the
+        # isolated attempt home before the real spawn. The previous
+        # comment-only integration is replaced by an explicit call
+        # whose digest.profile_id is compared to the launcher's
+        # ``profile_id`` so a mismatch raises a typed refusal.
+        try:
+            attempt_digest = self._materialise_and_attest(
+                profile_id=profile_id,
+                workspace=workspace,
+            )
+        except AttemptHomeError as exc:
+            return LaunchResult(
+                False,
+                profile_id,
+                None,
+                [],
+                None,
+                f"attempt home failure: {exc}",
+                blocker_code=exc.code,
+                task_id=task_id,
+                attempt_id=attempt_id,
+                dry_run=False,
+            )
+        if attempt_digest.profile_id != profile_id:
+            return LaunchResult(
+                False,
+                profile_id,
+                None,
+                [],
+                None,
+                f"attempt-home loaded_profile mismatch: bound '{attempt_digest.profile_id}' "
+                f"but launcher was asked to launch '{profile_id}'",
+                blocker_code="loaded_profile_mismatch",
+                task_id=task_id,
+                attempt_id=attempt_id,
+                dry_run=False,
             )
         attestation, error, attest_cmd = self._attest(profile_id)
         if error or attestation is None:

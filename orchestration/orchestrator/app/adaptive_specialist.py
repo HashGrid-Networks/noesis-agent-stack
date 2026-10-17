@@ -81,9 +81,13 @@ class CapabilityState(str, enum.Enum):
 
 
 # Spec §11.4 / §9.1 route disposition taxonomy. ``UNKNOWN`` is preserved on
-# purpose and must never be coerced into ``READY``.
+# purpose and must never be coerced into ``READY``. ``READY_QUALIFIED``
+# (B2) is the conjunction of auth+state+cooldown=READY with quota=UNKNOWN;
+# the dispatcher refuses a launch on this disposition unless the caller
+# passed an explicit ``allow_unknown_quota`` flag.
 class RouteDisposition(str, enum.Enum):
     READY = "READY"
+    READY_QUALIFIED = "READY_QUALIFIED"
     EXHAUSTED = "EXHAUSTED"
     RATE_LIMITED = "RATE_LIMITED"
     AUTH_FAILED = "AUTH_FAILED"
@@ -125,6 +129,167 @@ class PrivacyConstraint(str, enum.Enum):
             if member.value == label:
                 return member
         raise ValueError(f"unknown privacy constraint label: {label!r}")
+
+
+# B2 (contract ``adaptive-specialist-preflight-b2``): the data-classification
+# label set is closed. Anything outside the set is rejected with a typed
+# block; the previous "capability-name contains 'private'" heuristic is
+# removed because it mapped arbitrary strings onto a constraint.
+class PrivacyClassification(str, enum.Enum):
+    """Closed data-classification label set for the preflight input.
+
+    The set is intentionally narrow and closed: a caller that supplies any
+    other label (e.g. ``"private"``, ``"secret"``, ``"sanitized"``) is
+    refused with a typed ``PolicyViolation("invalid_privacy_classification", ...)``
+    rather than silently mapped to a default scope.
+    """
+
+    PUBLIC_DATA = "public_data"
+    INTERNAL = "internal"
+    CONFIDENTIAL = "confidential"
+    RESTRICTED = "restricted"
+
+    @classmethod
+    def from_label(cls, label: Any) -> "PrivacyClassification":
+        if label is None:
+            raise ValueError("data_classification is required")
+        if isinstance(label, PrivacyClassification):
+            return label
+        text = str(label).strip()
+        for member in cls:
+            if member.value == text:
+                return member
+        raise ValueError(
+            f"invalid data_classification: {label!r}; allowed="
+            f"{[m.value for m in cls]}"
+        )
+
+
+# B2: the evidence-shape verdict returned by ``_coerce_preflight_evidence``.
+# ``LEGACY_ABSENT`` is allowed only for tasks admitted before this contract
+# was merged; new tasks carrying ``LEGACY_ABSENT`` evidence are blocked.
+class EvidenceShape(str, enum.Enum):
+    VALID = "valid"
+    INVALID = "invalid"
+    LEGACY_ABSENT = "legacy_absent"
+
+    @classmethod
+    def from_label(cls, label: Any) -> "EvidenceShape":
+        if isinstance(label, EvidenceShape):
+            return label
+        text = str(label)
+        for member in cls:
+            if member.value == text:
+                return member
+        raise ValueError(f"unknown evidence-shape verdict: {label!r}")
+
+
+# B2: ordering for the worst-of route disposition walk inside
+# ``TaskConfigurationPrecomputer.evaluate``. ``READY_QUALIFIED`` sits
+# strictly below ``READY`` (so the KEEP-only path never sees it) but
+# above ``UNKNOWN`` so the engine can branch on a quota-unknown signal
+# even when deterministic fields look healthy.
+_DISPOSITION_RANK: dict[RouteDisposition, int] = {
+    RouteDisposition.READY: 0,
+    RouteDisposition.READY_QUALIFIED: 1,
+    RouteDisposition.UNKNOWN: 2,
+    RouteDisposition.AUTH_FAILED: 3,
+    RouteDisposition.RATE_LIMITED: 4,
+    RouteDisposition.UNAVAILABLE: 5,
+    RouteDisposition.EXHAUSTED: 6,
+}
+
+
+# B2 (contract §3.3): the full selected-route context the evaluator
+# received. Empty-string-or-``None`` defaults are not accepted when the
+# caller actually has a value; only ``applicable_policy_revision`` may
+# be ``None`` for tasks that have no inference routing yet.
+@dataclass(frozen=True)
+class PreflightContext:
+    """The immutable, typed selected-route context the preflight evaluates.
+
+    A ``PreflightContext`` is constructed once per ``route_with_preflight``
+    call. The orchestrator is the only authority on its own tasks; the
+    dispatcher passes the selected profile, the proposed provider/model,
+    the privacy/data-classification set, and the applicable policy/config
+    revisions into the evaluator. ``None`` defaults are accepted only on
+    fields where the contract explicitly allows it
+    (``applicable_policy_revision`` for pre-routing tasks).
+    """
+
+    task_class: str
+    risk_tier: str
+    data_classification: str
+    privacy_constraints: tuple[str, ...]
+    selected_profile_id: str
+    selected_runtime_profile: str
+    selected_provider: str
+    selected_model: str
+    applicable_configuration_revision: str
+    applicable_policy_revision: str | None
+    task_id: str
+    attempt_id: str
+    attempt_epoch: int
+    assignment_epoch: int | None
+    fencing_token: str | None
+
+    def require_non_empty(self) -> None:
+        """Raise :class:`ValueError` when a required field is empty.
+
+        ``applicable_policy_revision`` and ``fencing_token`` may be ``None``
+        (a task without inference routing has no policy revision; a
+        pre-claim task has no fencing token). All other fields must carry
+        a non-empty value.
+        """
+        for field_name in (
+            "task_class",
+            "risk_tier",
+            "data_classification",
+            "selected_profile_id",
+            "selected_runtime_profile",
+            "selected_provider",
+            "selected_model",
+            "applicable_configuration_revision",
+            "task_id",
+            "attempt_id",
+        ):
+            value = getattr(self, field_name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(
+                    f"PreflightContext.{field_name} is required (got {value!r})"
+                )
+        if not isinstance(self.attempt_epoch, int) or self.attempt_epoch < 0:
+            raise ValueError(
+                f"PreflightContext.attempt_epoch must be a non-negative int "
+                f"(got {self.attempt_epoch!r})"
+            )
+
+
+@dataclass(frozen=True)
+class PreflightConfigurationProposal:
+    """The typed evidence the dispatcher persists per call.
+
+    The proposal is the contract deliverable for the preflight decision.
+    It is bound to a ``PreflightContext``; the dispatcher only persists
+    the proposal (and its digests) once ``require_non_empty`` has
+    accepted the context. The ``evidence_digest`` covers the proposal's
+    own payload; the ``bundle_digest`` covers the decision/reason set;
+    the ``capability_snapshot_digest`` binds the decision to the exact
+    snapshot revision it was computed against.
+    """
+
+    context: PreflightContext
+    decision: PreflightDecision
+    selected_provider_family: str
+    reasons: tuple[str, ...]
+    unknowns: tuple[str, ...]
+    exceptions: tuple[str, ...]
+    bundle_digest: str
+    evidence_digest: str
+    capability_snapshot_digest: str
+    readiness_digests: Mapping[str, str]
+    route_disposition: str | None
+    allow_unknown_quota: bool
 
 
 # ---------------------------------------------------------------------------
@@ -385,24 +550,37 @@ class RouteReadinessEvidence:
 
     @property
     def combined_disposition(self) -> RouteDisposition:
-        """Worst-of auth/eligibility/cooldown combined disposition."""
-        # Order is significant: a missing quota is ``UNKNOWN``; the worst
-        # of the deterministic fields (cooldown, provider-state, auth)
-        # dominates.
+        """Worst-of auth/eligibility/cooldown/quota combined disposition.
+
+        B2: when the deterministic fields (auth+state+cooldown) are all
+        ``READY`` but quota is ``UNKNOWN``, the combined disposition is
+        ``READY_QUALIFIED`` — distinct from ``READY`` and from
+        ``UNKNOWN`` — so the dispatcher can refuse a launch without an
+        explicit ``allow_unknown_quota`` opt-in while preserving the
+        quota-unknown signal for replay.
+        """
         candidates: list[RouteDisposition] = [
             self.local_cooldown_disposition,
             self.provider_state_disposition,
         ]
         if not self.auth_eligible:
             candidates.append(RouteDisposition.AUTH_FAILED)
-        # ``quota_disposition`` is allowed to be UNKNOWN; that's preserved
-        # at the field level but never coerced into READY here.
+        deterministic_ready = all(
+            d is RouteDisposition.READY
+            for d in (
+                self.local_cooldown_disposition,
+                self.provider_state_disposition,
+            )
+        ) and self.auth_eligible
+        if deterministic_ready and self.quota_disposition is RouteDisposition.UNKNOWN:
+            return RouteDisposition.READY_QUALIFIED
         if self.quota_disposition is not RouteDisposition.UNKNOWN:
             candidates.append(self.quota_disposition)
         worst = RouteDisposition.READY
         rank = {d: i for i, d in enumerate(
             [
                 RouteDisposition.READY,
+                RouteDisposition.READY_QUALIFIED,
                 RouteDisposition.UNKNOWN,
                 RouteDisposition.AUTH_FAILED,
                 RouteDisposition.RATE_LIMITED,
@@ -551,6 +729,14 @@ class TaskConfigurationProposal:
     The proposal is the contract deliverable for the preflight decision.
     It is immutable; evidence digests are stable so the canonical ledger
     can bind them to the task/attempt without re-running the engine.
+
+    ``allow_unknown_quota`` (B2) records the caller's explicit
+    opt-in to launching when the readiness surface shows quota=UNKNOWN
+    but auth+state+cooldown are READY. ``exceptions`` carries the list
+    of reasons the dispatcher should surface when replaying the
+    proposal (e.g. ``quota_unknown``). Both fields feed into
+    ``evidence_digest`` so a replay can verify the same exception
+    shape the original preflight recorded.
     """
 
     task_class: str
@@ -566,6 +752,9 @@ class TaskConfigurationProposal:
     capability_snapshot_digest: str
     readiness_digests: Mapping[str, str]
     unknowns: tuple[str, ...] = ()
+    allow_unknown_quota: bool = False
+    exceptions: tuple[str, ...] = ()
+    route_disposition: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -582,6 +771,9 @@ class TaskConfigurationProposal:
             "evidence_digest": self.evidence_digest,
             "capability_snapshot_digest": self.capability_snapshot_digest,
             "readiness_digests": dict(self.readiness_digests),
+            "allow_unknown_quota": self.allow_unknown_quota,
+            "exceptions": list(self.exceptions),
+            "route_disposition": self.route_disposition,
         }
 
 
@@ -619,7 +811,16 @@ class TaskConfigurationPrecomputer:
         privacy_constraint: PrivacyConstraint | None,
         current_profile_id: str,
         readiness_overrides: Mapping[str, RouteReadinessEvidence] | None = None,
+        allow_unknown_quota: bool = False,
     ) -> TaskConfigurationProposal:
+        # B2: the data-classification label set is closed. The previous
+        # capability-name heuristic is removed. Anything outside the set
+        # raises ``ValueError``; the dispatcher maps that to a typed
+        # ``PolicyViolation("invalid_privacy_classification", ...)``.
+        try:
+            classification_label = PrivacyClassification.from_label(data_classification)
+        except ValueError:
+            classification_label = None
         snapshot = self._snapshot
         profile = next(
             (p for p in snapshot.profiles if p.profile_id == current_profile_id),
@@ -627,6 +828,7 @@ class TaskConfigurationPrecomputer:
         )
         reasons: list[str] = []
         unknowns: list[str] = []
+        exceptions: list[str] = []
         readiness_digests: dict[str, str] = {}
 
         # Self-authority expansion: refuse immediately. A preflight that
@@ -642,6 +844,9 @@ class TaskConfigurationPrecomputer:
                 reasons=tuple(reasons),
                 unknowns=("supervisor_self_authority_attempt",),
                 readiness_digests=readiness_digests,
+                allow_unknown_quota=allow_unknown_quota,
+                exceptions=tuple(exceptions),
+                route_disposition=None,
             )
 
         # A confidential data class with no private-only capability is a
@@ -652,6 +857,14 @@ class TaskConfigurationPrecomputer:
             PrivacyConstraint.PRIVATE_ONLY,
             PrivacyConstraint.SENSITIVE_LOCAL_ONLY,
         }
+        # B2 §3.3: an invalid data_classification label is treated as
+        # "no constraint inferred" — refused here, never silently
+        # downgraded to public.
+        privacy_satisfied = True
+        if classification_label is None:
+            privacy_satisfied = False
+            reasons.append("invalid_privacy_classification")
+            unknowns.append("data_classification_unrecognised")
         provider_family = "public-cloud"
         if profile is None:
             reasons.append("profile_not_in_snapshot")
@@ -663,6 +876,14 @@ class TaskConfigurationPrecomputer:
                 reasons.append("privacy_constraint_unsatisfied")
                 unknowns.append("no_private_capability_in_profile")
                 provider_family = "private-only"
+            if classification_label in {
+                PrivacyClassification.CONFIDENTIAL,
+                PrivacyClassification.RESTRICTED,
+            } and not any(
+                "private" in c.lower() or "local" in c.lower() for c in capabilities
+            ):
+                reasons.append("confidential_data_no_private_capability")
+                unknowns.append("confidential_data_no_private_capability")
 
         # Readiness evidence aggregation. The precomputer only reads the
         # provided evidence; it never refreshes credentials or calls a
@@ -670,22 +891,14 @@ class TaskConfigurationPrecomputer:
         # coerced into READY at this layer — the disposition policy lives
         # in the runtime gate.
         #
-        # Remediation B1 / minor 1: ``self._families`` is consumed here so
-        # the aggregator same-failure-domain invariant is structurally
-        # reflected in the decision path rather than exposed only through
-        # the operator-editable override map. For each provider we:
-        #
-        #   1. resolve its provider family via ``self._families``;
-        #   2. record a per-provider digest under the ``family/provider``
-        #      composite key (preserves traceability of the family
-        #      collapse into the canonical evidence record);
-        #   3. when the family collapses two or more providers in this
-        #      evidence set, emit a ``family_collapse`` reason so the
-        #      downstream dispatch can refuse to count them as
-        #      independent routes;
-        #   4. include the family in every disqualifying reason so a
-        #      caller can branch on family without re-resolving.
+        # B2 §3.4: a route whose deterministic fields are READY but whose
+        # quota is UNKNOWN carries the ``READY_QUALIFIED`` combined
+        # disposition; the dispatcher refuses to launch without an
+        # explicit ``allow_unknown_quota`` opt-in. The flag value is
+        # part of the evidence digest so replay can verify the same
+        # exception shape.
         family_groups: dict[str, list[str]] = {}
+        route_disposition: RouteDisposition | None = None
         for provider, evidence in (readiness_overrides or {}).items():
             family = self._families.family_of(provider)
             digest_input = json.dumps(
@@ -704,16 +917,36 @@ class TaskConfigurationPrecomputer:
                     f"route_disqualifying:{family}:{provider}:"
                     f"{evidence.combined_disposition.value}"
                 )
+            if (
+                route_disposition is None
+                or _DISPOSITION_RANK[evidence.combined_disposition]
+                > _DISPOSITION_RANK[route_disposition]
+            ):
+                route_disposition = evidence.combined_disposition
         for family, members in sorted(family_groups.items()):
             if len(members) > 1:
                 reasons.append(
                     f"family_collapse:{family}:{len(members)}"
                 )
+        if (
+            route_disposition is RouteDisposition.READY_QUALIFIED
+            and not allow_unknown_quota
+        ):
+            reasons.append("quota_unknown_qualifies_only")
+            exceptions.append("quota_unknown")
+        elif (
+            route_disposition is RouteDisposition.READY_QUALIFIED
+            and allow_unknown_quota
+        ):
+            exceptions.append("quota_unknown_acknowledged")
 
         decision = self._decide(
             reasons=reasons,
             profile=profile,
             requires_private=requires_private,
+            privacy_satisfied=privacy_satisfied,
+            route_disposition=route_disposition,
+            allow_unknown_quota=allow_unknown_quota,
         )
 
         return self._build_proposal(
@@ -723,6 +956,9 @@ class TaskConfigurationPrecomputer:
             reasons=tuple(reasons),
             unknowns=tuple(unknowns),
             readiness_digests=readiness_digests,
+            allow_unknown_quota=allow_unknown_quota,
+            exceptions=tuple(exceptions),
+            route_disposition=route_disposition.value if route_disposition else None,
         )
 
     @classmethod
@@ -732,15 +968,35 @@ class TaskConfigurationPrecomputer:
         reasons: Sequence[str],
         profile: CapabilityProfileView | None,
         requires_private: bool,
+        privacy_satisfied: bool,
+        route_disposition: RouteDisposition | None,
+        allow_unknown_quota: bool,
     ) -> PreflightDecision:
         if any(r.startswith("self_authority") for r in reasons):
             return PreflightDecision.BLOCK
         if any(r.startswith("route_disqualifying") for r in reasons):
             return PreflightDecision.BLOCK
+        if "invalid_privacy_classification" in reasons:
+            return PreflightDecision.BLOCK
         if "privacy_constraint_unsatisfied" in reasons and requires_private:
+            return PreflightDecision.BLOCK
+        if "confidential_data_no_private_capability" in reasons:
+            # B2 §3.7: a confidential data class with no private
+            # capability in the selected profile is a TASK_OVERRIDE
+            # situation: a privacy-qualified alternative must be
+            # recorded, or a human approval must gate the launch.
+            if not requires_private:
+                return PreflightDecision.TASK_OVERRIDE
             return PreflightDecision.BLOCK
         if profile is None:
             return PreflightDecision.BLOCK
+        # B2 §3.4: READY_QUALIFIED without the explicit opt-in is
+        # REQUIRE_APPROVAL, never silently KEEP.
+        if (
+            route_disposition is RouteDisposition.READY_QUALIFIED
+            and not allow_unknown_quota
+        ):
+            return PreflightDecision.REQUIRE_APPROVAL
         return PreflightDecision.KEEP
 
     def _build_proposal(
@@ -752,6 +1008,9 @@ class TaskConfigurationPrecomputer:
         reasons: tuple[str, ...],
         unknowns: tuple[str, ...],
         readiness_digests: Mapping[str, str],
+        allow_unknown_quota: bool = False,
+        exceptions: tuple[str, ...] = (),
+        route_disposition: str | None = None,
     ) -> TaskConfigurationProposal:
         bundle_digest = hashlib.sha256(
             json.dumps(
@@ -765,11 +1024,16 @@ class TaskConfigurationPrecomputer:
                 default=str,
             ).encode("utf-8")
         ).hexdigest()
+        # B2 §3.4: ``evidence_digest`` must include the
+        # ``allow_unknown_quota`` flag value so a replay can verify
+        # the same exception shape the original preflight recorded.
         evidence_digest = hashlib.sha256(
             json.dumps(
                 {
                     "snapshot_digest": self._snapshot.digest,
                     "readiness_digests": dict(readiness_digests),
+                    "allow_unknown_quota": bool(allow_unknown_quota),
+                    "exceptions": list(exceptions),
                 },
                 sort_keys=True,
                 default=str,
@@ -789,6 +1053,9 @@ class TaskConfigurationPrecomputer:
             capability_snapshot_digest=self._snapshot.digest,
             readiness_digests=readiness_digests,
             unknowns=unknowns,
+            allow_unknown_quota=allow_unknown_quota,
+            exceptions=exceptions,
+            route_disposition=route_disposition,
         )
 
 

@@ -80,14 +80,20 @@ def test_capability_state_enum_distinguishes_five_states() -> None:
         CapabilityState.from_label("unknown_state")
 
 
-def test_route_disposition_enum_keeps_separate_unknown_state() -> None:
+def test_route_disposition_enum_keeps_separate_unknown_state(tmp_path: Path) -> None:
     """Spec §11.4: missing quota evidence must remain UNKNOWN, never
     accidentally coerced into READY. Each disposition is a discrete label.
+
+    B2: ``READY_QUALIFIED`` is added so a route whose deterministic
+    fields are READY but quota is UNKNOWN carries a distinct verdict
+    the dispatcher can refuse without coercing quota-unknown into
+    READY.
     """
     from app.adaptive_specialist import RouteDisposition
 
     expected = {
         "READY",
+        "READY_QUALIFIED",
         "EXHAUSTED",
         "RATE_LIMITED",
         "AUTH_FAILED",
@@ -96,6 +102,7 @@ def test_route_disposition_enum_keeps_separate_unknown_state() -> None:
     }
     assert {d.name for d in RouteDisposition} == expected
     assert RouteDisposition.from_label("UNKNOWN") is RouteDisposition.UNKNOWN
+    assert RouteDisposition.from_label("READY_QUALIFIED") is RouteDisposition.READY_QUALIFIED
     with pytest.raises(ValueError):
         RouteDisposition.from_label("READY_LIKE")
 
@@ -305,7 +312,7 @@ def test_preflight_keep_when_route_qualified_and_no_overrides_needed(tmp_path: P
     out = engine.evaluate(
         task_class="implementation",
         risk_tier="r0",
-        data_classification="public",
+        data_classification="public_data",
         privacy_constraint=None,
         current_profile_id="noesis-forge",
         readiness_overrides={"fake": evidence},
@@ -372,7 +379,7 @@ def test_preflight_block_returns_typed_block_with_reasons(tmp_path: Path) -> Non
     out = engine.evaluate(
         task_class="implementation",
         risk_tier="r0",
-        data_classification="public",
+        data_classification="public_data",
         privacy_constraint=None,
         current_profile_id="noesis-forge",
         readiness_overrides={
@@ -427,7 +434,7 @@ def test_preflight_self_authority_expansion_is_rejected(tmp_path: Path) -> None:
     out = engine.evaluate(
         task_class="implementation",
         risk_tier="r0",
-        data_classification="public",
+        data_classification="public_data",
         privacy_constraint=None,
         current_profile_id="noesis-orchestrator",  # self-authority attempt
         readiness_overrides={"fake": reg.evaluate(provider="fake", model="fake")},

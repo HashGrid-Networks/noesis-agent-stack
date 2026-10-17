@@ -59,7 +59,7 @@ def test_preflight_configuration_appends_typed_evidence_to_task_ledger(tmp_path:
             required_capability="code_modify",
         ),
         current_profile_id="noesis-forge",
-        data_classification="public",
+        data_classification="public_data",
         privacy_constraint=None,
     )
     assert proposal.decision is PreflightDecision.KEEP
@@ -114,7 +114,7 @@ def test_preflight_configuration_attempts_share_evidence_digest(tmp_path: Path) 
             task_class="implementation", required_capability="code_modify"
         ),
         current_profile_id="noesis-forge",
-        data_classification="public",
+        data_classification="public_data",
         privacy_constraint=None,
     )
     # Reload the orchestrator from the same ledger and re-bind to the same
@@ -129,7 +129,7 @@ def test_preflight_configuration_attempts_share_evidence_digest(tmp_path: Path) 
             task_class="implementation", required_capability="code_modify"
         ),
         current_profile_id="noesis-forge",
-        data_classification="public",
+        data_classification="public_data",
         privacy_constraint=None,
     )
     assert proposal_first.evidence_digest == proposal_second.evidence_digest
@@ -569,7 +569,7 @@ def test_preflight_evidence_is_appended_per_attempt_epoch(tmp_path: Path) -> Non
             task_class="implementation", required_capability="code_modify"
         ),
         current_profile_id="noesis-forge",
-        data_classification="public",
+        data_classification="public_data",
         privacy_constraint=None,
     )
     # Append at the same epoch: bucket grows rather than overwriting.
@@ -579,7 +579,7 @@ def test_preflight_evidence_is_appended_per_attempt_epoch(tmp_path: Path) -> Non
             task_class="implementation", required_capability="code_modify"
         ),
         current_profile_id="noesis-forge",
-        data_classification="public",
+        data_classification="public_data",
         privacy_constraint=None,
     )
 
@@ -613,7 +613,7 @@ def test_preflight_evidence_is_appended_per_attempt_epoch(tmp_path: Path) -> Non
             task_class="implementation", required_capability="code_modify"
         ),
         current_profile_id="noesis-forge",
-        data_classification="public",
+        data_classification="public_data",
         privacy_constraint=None,
     )
 
@@ -681,7 +681,7 @@ def test_submit_candidate_rejects_stale_preflight_evidence(tmp_path: Path) -> No
             task_class="implementation", required_capability="code_modify"
         ),
         current_profile_id="noesis-forge",
-        data_classification="public",
+        data_classification="public_data",
         privacy_constraint=None,
     )
     dispatched2_pre = orch.mark_dispatched(
@@ -737,7 +737,7 @@ def test_submit_candidate_rejects_stale_preflight_evidence(tmp_path: Path) -> No
             task_class="implementation", required_capability="code_modify"
         ),
         current_profile_id="noesis-not-a-real-profile",
-        data_classification="public",
+        data_classification="public_data",
         privacy_constraint=None,
     )
     with pytest.raises(PolicyViolation, match="stale_preflight_evidence"):
@@ -821,7 +821,7 @@ def test_precomputer_consumes_provider_family_map_in_reasons(tmp_path: Path) -> 
     out = engine.evaluate(
         task_class="implementation",
         risk_tier="r0",
-        data_classification="public",
+        data_classification="public_data",
         privacy_constraint=None,
         current_profile_id="noesis-forge",
         readiness_overrides={"moa": moa_disq, "public-cloud-1": public_ready},

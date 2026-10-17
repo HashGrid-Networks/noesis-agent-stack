@@ -593,50 +593,84 @@
     "preflight_evidence": {
       "type": ["object", "null"],
       "additionalProperties": true,
-      "description": "Typed Phase B preflight configuration decision bound to this task. Set by Orchestrator.preflight_configuration; never default to a fabricated KEEP. Null means no preflight decision has been recorded yet.",
-      "properties": {
-        "decision": {
-          "type": "string",
-          "enum": ["KEEP", "TASK_OVERRIDE", "SELECT_ALTERNATIVE", "REQUIRE_APPROVAL", "BLOCK"]
-        },
-        "profile_id": {
-          "type": "string"
-        },
-        "selected_provider_family": {
-          "type": "string"
-        },
-        "reasons": {
+      "description": "Typed Phase B preflight configuration decisions bound to this task, keyed per attempt_epoch (B1). Each value is a list of envelope dicts with bundle_digest and evidence_digest. The '0' key is the sentinel bucket for envelopes recorded before an attempt was granted. Set by Orchestrator.preflight_configuration and Orchestrator.apply_preflight_override; never default to a fabricated KEEP. Null means no preflight decision has been recorded yet. B2: a present-but-invalid envelope shape (missing digests, mismatched attempt_epoch) is treated as invalid_preflight_evidence, not as legacy absence.",
+      "patternProperties": {
+        "^[0-9]+$": {
           "type": "array",
-          "items": {"type": "string"}
-        },
-        "unknowns": {
-          "type": "array",
-          "items": {"type": "string"}
-        },
-        "bundle_digest": {
-          "type": "string",
-          "minLength": 64,
-          "maxLength": 64
-        },
-        "evidence_digest": {
-          "type": "string",
-          "minLength": 64,
-          "maxLength": 64
-        },
-        "capability_snapshot_digest": {
-          "type": "string",
-          "minLength": 64,
-          "maxLength": 64
-        },
-        "readiness_digests": {
-          "type": "object",
-          "additionalProperties": {"type": "string"}
-        },
-        "task_class": {
-          "type": "string"
-        },
-        "data_classification": {
-          "type": "string"
+          "items": {
+            "type": "object",
+            "required": ["decision", "bundle_digest", "evidence_digest", "attempt_epoch"],
+            "additionalProperties": true,
+            "properties": {
+              "attempt_epoch": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "decision": {
+                "type": "string",
+                "enum": ["KEEP", "TASK_OVERRIDE", "SELECT_ALTERNATIVE", "REQUIRE_APPROVAL", "BLOCK"]
+              },
+              "profile_id": {
+                "type": "string"
+              },
+              "selected_provider_family": {
+                "type": "string"
+              },
+              "reasons": {
+                "type": "array",
+                "items": {"type": "string"}
+              },
+              "unknowns": {
+                "type": "array",
+                "items": {"type": "string"}
+              },
+              "exceptions": {
+                "type": "array",
+                "items": {"type": "string"}
+              },
+              "allow_unknown_quota": {
+                "type": "boolean"
+              },
+              "route_disposition": {
+                "type": ["string", "null"],
+                "enum": ["READY", "READY_QUALIFIED", "EXHAUSTED", "RATE_LIMITED", "AUTH_FAILED", "UNAVAILABLE", "UNKNOWN", null]
+              },
+              "bundle_digest": {
+                "type": "string",
+                "minLength": 8
+              },
+              "evidence_digest": {
+                "type": "string",
+                "minLength": 8
+              },
+              "capability_snapshot_digest": {
+                "type": "string",
+                "minLength": 8
+              },
+              "readiness_digests": {
+                "type": "object",
+                "additionalProperties": {"type": "string"}
+              },
+              "task_class": {
+                "type": "string"
+              },
+              "data_classification": {
+                "type": "string",
+                "enum": ["public_data", "internal", "confidential", "restricted"]
+              },
+              "applied_by": {
+                "type": "string"
+              },
+              "proposed_override": {
+                "type": "object",
+                "additionalProperties": true
+              },
+              "proposed_alternative": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
         }
       }
     }

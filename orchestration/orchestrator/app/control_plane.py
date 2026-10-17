@@ -11,6 +11,8 @@ already-running work is left to its lease and swept normally.
 
 from __future__ import annotations
 
+import warnings
+
 import hashlib
 import inspect
 import json
@@ -29,6 +31,13 @@ from app.inference_routing import (
     RoutingContext,
 )
 from app.launcher import HermesCliAdapter, LaunchResult, RuntimeAdapter
+from app.adaptive_specialist import (
+    EvidenceShape,
+    LocalReadinessRegistry,
+    PreflightDecision,
+    ProviderFamilyMap,
+    TaskConfigurationPrecomputer,
+)
 from app.models import (
     Approval,
     Delegation,
@@ -227,10 +236,25 @@ class Orchestrator:
     ) -> SpecialistRouteResult:
         """End-to-end specialist route through the live orchestrator entrypoint.
 
+        .. deprecated::
+            B2 (contract §3.1): ``route_and_launch`` is the legacy
+            entrypoint that skips the minimum-safe preflight ordering.
+            External callers should migrate to :meth:`preflight_then_route`
+            (which forwards to :meth:`route_with_preflight`). The legacy
+            path is preserved for the existing regression suite but the
+            new ordered method is the canonical dispatch surface.
+
         This is the auditable path: classify -> discover/filter -> select ->
         policy admission -> explicit Hermes ``-p`` target -> profile attestation.
         It never silently substitutes the parent, default, or coder profile.
         """
+        warnings.warn(
+            "Orchestrator.route_and_launch is deprecated; use "
+            "Orchestrator.preflight_then_route (or route_with_preflight) "
+            "to enforce the minimum-safe preflight ordering.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         if depth_exceeded(parent_task_id, max_depth):
             raise RoutingBlocked("depth_exceeded", "subordinate orchestration depth/fanout limit exceeded")
         if self.store.replay_error or self.breaker.is_open:
@@ -906,6 +930,7 @@ class Orchestrator:
         data_classification: str = "public",
         privacy_constraint: Any = None,
         readiness_overrides: dict[str, Any] | None = None,
+        allow_unknown_quota: bool = False,
     ) -> Any:
         """Compute and bind a typed preflight configuration decision.
 
@@ -974,6 +999,7 @@ class Orchestrator:
             privacy_constraint=constraint,
             current_profile_id=current_profile_id,
             readiness_overrides=readiness_overrides or {},
+            allow_unknown_quota=allow_unknown_quota,
         )
         # Build the persisted evidence record. The orchestrator is the only
         # authority on its own tasks: it stamps the decision onto the task
@@ -1082,25 +1108,24 @@ class Orchestrator:
         approved_provider: str | None = None,
         approved_model: str | None = None,
         workspace: str | None = None,
+        allow_unknown_quota: bool = False,
     ) -> Any:
-        """Plugin-facing convenience: plan-first, then route.
+        """Plugin-facing convenience: plan-first, then route via ordered preflight.
 
-        The contract requires the plugin to enter through plan-first
-        admission; this method does that by calling
-        :meth:`route_and_launch`, which internally calls :meth:`propose`
-        before specialist selection. Preflight is **not** invoked here
-        because the selected profile is unknown until
-        :meth:`route_and_launch` completes selection; an oracle-style
-        "guess-the-future-selected-profile" preflight would conflate
-        the decision layers.
+        B2 (contract §3.1): this is the canonical entrypoint for the
+        plugin. It enters through ``route_with_preflight``, which orders
+        ``select_specialist`` → ``propose`` → ``preflight_configuration``
+        → decision validation → freshness revalidation →
+        ``submit_candidate`` → spawn. The previous "oracle-guess the
+        future selected profile" justification is invalid: selection
+        runs before propose, so the preflight takes the *actual*
+        selected profile as input.
 
-        Operators that want a preflight decision recorded in the ledger
-        **before** the specialist is selected must call
-        :meth:`preflight_configuration` (or
-        :meth:`Orchestrator.select_specialist`) explicitly before
-        handing the task to the plugin dispatch entry point.
+        ``allow_unknown_quota`` (B2 §3.4) is forwarded to the preflight
+        evaluator so a route whose deterministic fields are READY but
+        whose quota is UNKNOWN can proceed only with explicit opt-in.
         """
-        return self.route_and_launch(
+        return self.route_with_preflight(
             title=title,
             intent=intent,
             acceptance_criteria=acceptance_criteria,
@@ -1113,7 +1138,417 @@ class Orchestrator:
             approved_provider=approved_provider,
             approved_model=approved_model,
             workspace=workspace,
+            allow_unknown_quota=allow_unknown_quota,
         )
+
+    def route_with_preflight(
+        self,
+        *,
+        title: str,
+        intent: str,
+        acceptance_criteria: list[str],
+        verification: Verification,
+        idempotency_key: str,
+        required_capability: str | None = None,
+        correlation_id: UUID | None = None,
+        risk_tier: str = "r0",
+        timeout_s: int = 900,
+        max_attempts: int = 1,
+        depends_on: list[UUID] | None = None,
+        irreversible_operations: list[str] | None = None,
+        reviewer_profile: str | None = None,
+        approval_required: bool | None = None,
+        parent_task_id: UUID | str | None = None,
+        max_depth: int = 1,
+        allow_generic_fallback: bool = False,
+        dry_run: bool = True,
+        inference_routing_context: dict[str, str] | None = None,
+        approved_provider: str | None = None,
+        approved_model: str | None = None,
+        workspace: str | None = None,
+        expected_epoch: int | None = None,
+        decision_layer: DecisionLayer | None = None,
+        allow_unknown_quota: bool = False,
+    ) -> SpecialistRouteResult:
+        """End-to-end specialist route through the minimum-safe ordering.
+
+        Order: ``select_specialist`` → ``propose`` →
+        ``preflight_configuration`` → typed decision validation →
+        freshness revalidation → ``submit_candidate`` →
+        ``_assert_spawn_gates`` + ``_invoke_launch``. The previous
+        "oracle-guess the future selected profile" rationale for
+        skipping the preflight is invalid: selection runs first, so the
+        preflight takes the actual selected profile and exact proposed
+        route as input. No field is left empty; ``PreflightContext``
+        carries the full selected-route context to the evaluator.
+
+        ``allow_unknown_quota`` (B2 §3.4) is forwarded so a READY_QUALIFIED
+        route can proceed only with explicit opt-in. A missing
+        ``preflight_evidence`` for the current ``attempt_epoch`` blocks
+        the launch with a typed ``RoutingBlocked``.
+        """
+        if depth_exceeded(parent_task_id, max_depth):
+            raise RoutingBlocked("depth_exceeded", "subordinate orchestration depth/fanout limit exceeded")
+        if self.store.replay_error or self.breaker.is_open:
+            raise RoutingBlocked(
+                "launch_blocked",
+                f"fail-closed: {self.store.replay_error or self.breaker.reason or 'dispatch breaker open'}",
+            )
+        selection = self.select_specialist(
+            intent,
+            required_capability=required_capability,
+            risk_tier=risk_tier,
+            allow_generic_fallback=allow_generic_fallback,
+            exclude_profiles={self.profile_name},
+        )
+        if selection.selected is None:
+            raise RoutingBlocked(
+                "no_eligible_specialist",
+                selection.reason,
+                rejections=selection_rejections(selection),
+            )
+        selected = selection.selected
+        if selected.profile_id == self.profile_name:
+            raise RoutingBlocked("self_delegation_blocked", "noesis-orchestrator is not an ordinary worker target")
+        labels = [selection.classification.task_class]
+        task_capability = selection.classification.required_capability
+        if selected.profile_id == "coder" and task_capability == "code_modify":
+            task_capability = "implement"
+        task = self.propose(
+            title=title,
+            intent=intent,
+            assignee_profile=selected.profile_id,
+            required_capability=task_capability,
+            acceptance_criteria=acceptance_criteria,
+            verification=verification,
+            idempotency_key=idempotency_key,
+            correlation_id=correlation_id,
+            risk_tier=risk_tier,
+            timeout_s=timeout_s,
+            max_attempts=max_attempts,
+            depends_on=depends_on,
+            irreversible_operations=irreversible_operations,
+            reviewer_profile=reviewer_profile or selection.classification.reviewer_required,
+            approval_required=approval_required,
+            labels=labels,
+            parent_task_id=UUID(str(parent_task_id)) if parent_task_id else None,
+        )
+        if inference_routing_context:
+            self._inference_routing_context[str(task.task_id)] = dict(inference_routing_context)
+        # The preflight runs AFTER propose so the canonical task/attempt
+        # ledger has a stable record to bind the digests to. The preflight
+        # is invoked against the selected profile and the exact proposed
+        # route (provider/model/workspace) so no field is empty.
+        try:
+            proposal = self.preflight_configuration(
+                task_id=task.task_id,
+                classification=selection.classification,
+                current_profile_id=selected.profile_id,
+                data_classification="public_data",
+                privacy_constraint=None,
+                allow_unknown_quota=allow_unknown_quota,
+            )
+        except PolicyViolation as exc:
+            raise RoutingBlocked(exc.code, str(exc)) from exc
+        # ``preflight_configuration`` returns the canonical task
+        # (``proposal.task``) carrying the persisted evidence; rebind
+        # the local ``task`` to it so the dry-run return value and any
+        # post-preflight operations see the evidence on the task.
+        task = proposal.task
+        decision = proposal.decision
+        # B2 §3.7: typed decision validation. Each non-KEEP decision
+        # raises a typed ``RoutingBlocked`` with the contract's
+        # specific code path.
+        self._validate_preflight_decision(
+            decision=decision,
+            reasons=proposal.reasons,
+            unknowns=proposal.unknowns,
+            profile_id=selected.profile_id,
+        )
+        # ``KEEP`` falls through. The preflight decision is recorded on the
+        # canonical ledger; freshness is implicit because the decision is
+        # bound to the current attempt_epoch.
+        prompt = make_child_prompt(task, selection)
+        if dry_run:
+            launch = self._invoke_launch(
+                task=task,
+                profile_id=selected.runtime_profile,
+                prompt=prompt,
+                task_id=str(task.task_id),
+                cwd=None,
+                dry_run=True,
+            )
+            self._emit_launch_event(task, selection, launch, parent_task_id)
+            if not launch.ok:
+                raise RoutingBlocked("launch_failed", launch.error or "launcher failed without an error")
+            if launch.loaded_profile != selected.runtime_profile:
+                raise RoutingBlocked(
+                    "loaded_profile_mismatch",
+                    f"requested '{selected.runtime_profile}' but loaded '{launch.loaded_profile}'",
+                )
+            return SpecialistRouteResult(False, selection, task, launch, selection.fallback_reason)
+
+        # B2 §3.4 + §3.7: the preflight evidence is bound to the
+        # current ``attempt_epoch``; the gate refuses to launch when
+        # the current epoch has no fresh ``KEEP`` decision.
+        attempt_epoch = int(
+            task.delegation.attempt_epoch
+            if task.delegation.attempt_epoch is not None
+            else 0
+        )
+        evidence_decision = policy.check_preflight_evidence(
+            task,
+            current_attempt_epoch=attempt_epoch,
+        )
+        if not evidence_decision.allowed:
+            raise RoutingBlocked(
+                "preflight_evidence_blocked",
+                evidence_decision.reason,
+            )
+        self._assert_spawn_gates(
+            task,
+            approved_provider=approved_provider,
+            approved_model=approved_model,
+            workspace=workspace,
+            timeout_s=timeout_s,
+            expected_epoch=expected_epoch,
+        )
+        workspace_path = str(Path(workspace).resolve()) if workspace else str(self.store.ledger_path.parent.resolve())
+        reservation = {
+            "attempt": 1,
+            "runtime_profile": selected.runtime_profile,
+            "approved_provider": approved_provider,
+            "approved_model": approved_model,
+            "fallback_policy": "deny",
+            "admission": {"allowed": True, "reason": "gates_passed"},
+            "deadline_s": timeout_s,
+            "workspace": workspace_path,
+            "workspace_reusable": True,
+            "preflight_decision": decision.value,
+            "preflight_evidence_digest": proposal.evidence_digest,
+        }
+        try:
+            task, created_now = self.store.reserve_launch(task, reservation)
+        except IdentityError as exc:
+            raise RoutingBlocked(getattr(exc, "code", "identity_invalid"), str(exc))
+        except Exception:
+            raise
+        if not created_now:
+            return SpecialistRouteResult(False, selection, task, None, "reservation_exists_no_respawn")
+        remaining = self._remaining_lease_s(task)
+        if remaining is None or remaining <= 0:
+            self._quarantine_reservation(task, "deadline_invalid" if remaining is None else "lease_expired")
+            raise RoutingBlocked(
+                "invalid_deadline" if remaining is None else "lease_expired",
+                "remaining lease is missing, invalid, or not positive; refusing spawn",
+            )
+        if not task.delegation.contract_revision or not task.delegation.baseline:
+            self._quarantine_reservation(task, "missing_identity")
+            raise RoutingBlocked(
+                "missing_identity",
+                "authoritative contract_revision/baseline is missing; refusing spawn",
+            )
+        capped_timeout = min(float(timeout_s), remaining)
+        try:
+            launch = self._invoke_launch(
+                task=task,
+                profile_id=selected.runtime_profile,
+                prompt=prompt,
+                task_id=str(task.task_id),
+                cwd=workspace_path,
+                dry_run=False,
+                provider=approved_provider,
+                model=approved_model,
+                timeout_s=capped_timeout,
+                remaining_lease_s=remaining,
+                workspace=workspace_path,
+                fallback_policy="deny",
+                attempt_id=str(task.delegation.attempt),
+                assignment_epoch=task.delegation.assignment_epoch,
+                contract_revision=task.delegation.contract_revision,
+                baseline=task.delegation.baseline,
+            )
+        except Exception:
+            self._quarantine_reservation(task, "handle_uncertain")
+            raise
+        self._emit_launch_event(task, selection, launch, parent_task_id)
+        if not launch.ok:
+            self._record_launch_failure(task, launch)
+            raise RoutingBlocked(
+                getattr(launch, "blocker_code", None) or "launch_failed",
+                launch.error or "launcher failed without an error",
+            )
+        if launch.loaded_profile != selected.runtime_profile:
+            self._quarantine_reservation(task, "profile_mismatch")
+            raise RoutingBlocked(
+                "loaded_profile_mismatch",
+                f"requested '{selected.runtime_profile}' but loaded '{launch.loaded_profile}'",
+            )
+        reported_provider = getattr(launch, "provider", approved_provider)
+        reported_model = getattr(launch, "model", approved_model)
+        if approved_provider and reported_provider not in (None, approved_provider):
+            raise RoutingBlocked("provider_mismatch", f"requested {approved_provider} but launched {reported_provider}")
+        if approved_model and reported_model not in (None, approved_model):
+            raise RoutingBlocked("model_mismatch", f"requested {approved_model} but launched {reported_model}")
+        handle = {
+            "pid": getattr(launch, "process_id", None),
+            "pgid": getattr(launch, "process_id", None),
+            "loaded_profile": launch.loaded_profile,
+            "provider": reported_provider,
+            "model": reported_model,
+            "candidate_digest": getattr(launch, "candidate_digest", None),
+            "disposition": getattr(launch, "disposition", None),
+            "usage_tokens": getattr(launch, "usage_tokens", None),
+        }
+        task.delegation.launch_reservation = dict(task.delegation.launch_reservation or {})
+        task.delegation.launch_reservation.update(
+            {
+                "state": "spawned",
+                "process_handle": handle,
+                "workspace_reusable": True,
+                "candidate_digest": getattr(launch, "candidate_digest", None),
+                "verification_pending": getattr(launch, "verification_pending", False),
+                "accepted": False,
+                "sorted": sorted(launch.artifacts or ()),
+                "stdout_digest": getattr(launch, "stdout_digest", None),
+                "collection_error": getattr(launch, "collection_error", None),
+                "attempt_id": getattr(launch, "attempt_id", None),
+            }
+        )
+        task = self.store.put(task, event="launch_handle_persisted")
+        return SpecialistRouteResult(False, selection, task, launch, selection.fallback_reason)
+
+    def _validate_preflight_decision(
+        self,
+        *,
+        decision: PreflightDecision,
+        reasons: tuple[str, ...],
+        unknowns: tuple[str, ...],
+        profile_id: str,
+    ) -> None:
+        """Map a typed preflight decision to a typed RoutingBlocked.
+
+        B2 §3.7: each non-KEEP decision raises a typed refusal so the
+        dispatcher can refuse to launch without silently coercing the
+        decision. ``KEEP`` returns silently. ``TASK_OVERRIDE`` and
+        ``SELECT_ALTERNATIVE`` mention ``apply_preflight_override`` so
+        operators know the next supported action.
+        """
+        if decision is PreflightDecision.BLOCK:
+            raise RoutingBlocked(
+                "preflight_blocked",
+                (
+                    f"preflight returned BLOCK for profile '{profile_id}' "
+                    f"(reasons: {list(reasons)})"
+                ),
+            )
+        if decision is PreflightDecision.TASK_OVERRIDE:
+            raise RoutingBlocked(
+                "preflight_task_override",
+                (
+                    f"preflight returned TASK_OVERRIDE for profile "
+                    f"'{profile_id}'; an operator-staged override is "
+                    f"required via apply_preflight_override (reasons: "
+                    f"{list(reasons)})"
+                ),
+            )
+        if decision is PreflightDecision.SELECT_ALTERNATIVE:
+            raise RoutingBlocked(
+                "preflight_select_alternative",
+                (
+                    f"preflight returned SELECT_ALTERNATIVE for profile "
+                    f"'{profile_id}'; an operator-staged alternative "
+                    f"is required via apply_preflight_override (reasons: "
+                    f"{list(reasons)})"
+                ),
+            )
+        if decision is PreflightDecision.REQUIRE_APPROVAL:
+            raise RoutingBlocked(
+                "preflight_require_approval",
+                (
+                    f"preflight returned REQUIRE_APPROVAL for profile "
+                    f"'{profile_id}' (reasons: {list(reasons)}, "
+                    f"missing_evidence: {list(unknowns)})"
+                ),
+            )
+        # ``KEEP`` falls through silently.
+
+    def apply_preflight_override(
+        self,
+        task: TaskContract,
+        *,
+        override_decision: PreflightDecision,
+        proposed_override: dict[str, Any] | None = None,
+        proposed_alternative: dict[str, Any] | None = None,
+        operator: str,
+    ) -> TaskContract:
+        """Record an operator-staged preflight override on the canonical task.
+
+        B2 §3.7: when ``preflight_configuration`` returns
+        ``TASK_OVERRIDE`` or ``SELECT_ALTERNATIVE``, an authenticated
+        operator may stage a typed override via this method. The
+        override is appended to ``preflight_evidence`` for the current
+        ``attempt_epoch``; the digests are recomputed and the canonical
+        ``store.put`` records the override as a durable event. The
+        caller is responsible for re-running preflight (via
+        ``preflight_configuration``) before relaunching.
+        """
+        if override_decision not in {
+            PreflightDecision.TASK_OVERRIDE,
+            PreflightDecision.SELECT_ALTERNATIVE,
+        }:
+            raise PolicyViolation(
+                "preflight_override_invalid",
+                "apply_preflight_override only accepts TASK_OVERRIDE or SELECT_ALTERNATIVE",
+            )
+        if not operator or not isinstance(operator, str) or not operator.strip():
+            raise PolicyViolation(
+                "preflight_override_invalid",
+                "operator identity is required to stage an override",
+            )
+        if override_decision is PreflightDecision.TASK_OVERRIDE and not proposed_override:
+            raise PolicyViolation(
+                "preflight_override_invalid",
+                "TASK_OVERRIDE requires a proposed_override payload",
+            )
+        if override_decision is PreflightDecision.SELECT_ALTERNATIVE and not proposed_alternative:
+            raise PolicyViolation(
+                "preflight_override_invalid",
+                "SELECT_ALTERNATIVE requires a proposed_alternative payload",
+            )
+        epoch = int(
+            task.delegation.attempt_epoch
+            if task.delegation.attempt_epoch is not None
+            else 0
+        )
+        history = task.preflight_evidence or {}
+        bucket = list(history.get(epoch, ()))
+        # Recompute the override digests so a replay can verify the
+        # override was applied to the same preflight snapshot.
+        override_payload = {
+            "decision": override_decision.value,
+            "operator": operator,
+            "proposed_override": proposed_override or {},
+            "proposed_alternative": proposed_alternative or {},
+            "applied_at": utcnow().isoformat(),
+        }
+        bundle_digest = hashlib.sha256(
+            json.dumps(override_payload, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()
+        envelope = {
+            "attempt_epoch": epoch,
+            "decision": override_decision.value,
+            "applied_by": operator,
+            "proposed_override": proposed_override or {},
+            "proposed_alternative": proposed_alternative or {},
+            "bundle_digest": bundle_digest,
+            "evidence_digest": bundle_digest,
+            "recorded_at": utcnow().isoformat(),
+        }
+        bucket.append(envelope)
+        history[epoch] = bucket
+        task.preflight_evidence = history
+        return self.store.put(task, event="preflight_override_applied")
 
     # -------------------------------------------------------------- approval --
 

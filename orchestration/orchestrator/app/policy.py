@@ -219,3 +219,85 @@ def validate_handoff(task: TaskContract, *, now: datetime | None = None) -> None
             "review_required",
             f"task requires sign-off by '{task.reviewer_profile}' before success",
         )
+
+
+# --------------------------------------------------------- B2 preflight gates --
+
+
+# B2 (contract §3.1, §3.2, §3.4): every governed-dispatch launch must
+# carry a typed preflight evidence verdict bound to the current
+# ``attempt_epoch``. ``LEGACY_ABSENT`` evidence is only allowed for
+# tasks admitted before this contract was merged; new tasks with
+# ``LEGACY_ABSENT`` evidence are blocked at this gate, never coerced
+# into a launch. The canonical rehydrate already populates
+# ``task.preflight_evidence`` so this gate operates on the in-memory
+# task object directly.
+def check_preflight_evidence(
+    task: TaskContract,
+    *,
+    current_attempt_epoch: int,
+    legacy_acknowledged_at: str | None = None,
+) -> DispatchDecision:
+    """Fail closed when preflight evidence is missing, invalid, or stale.
+
+    The §3.B "stale evidence reused without re-preflight" scenario is
+    caught here as ``stale_preflight_evidence``; the §3.2
+    "corrupted evidence bypassed as legacy_absent" scenario is caught
+    as ``invalid_preflight_evidence`` or
+    ``missing_preflight_evidence`` depending on the shape.
+    """
+    evidence = task.preflight_evidence
+    if evidence is None:
+        # No preflight has ever run. The contract permits this only
+        # for tasks that were admitted before B2 merged; if no
+        # ``legacy_acknowledged_at`` is recorded the task is blocked.
+        if legacy_acknowledged_at:
+            return DispatchDecision(True, "legacy_absent acknowledged")
+        return DispatchDecision(
+            False,
+            "missing_preflight_evidence: no preflight has been recorded for this task",
+        )
+    bucket = evidence.get(int(current_attempt_epoch))
+    if bucket is None:
+        recorded = sorted(evidence.keys())
+        return DispatchDecision(
+            False,
+            f"stale_preflight_evidence: preflight evidence for "
+            f"attempt_epoch={current_attempt_epoch} is missing; recorded "
+            f"epochs={recorded}",
+        )
+    latest_entry = bucket[-1] if bucket else None
+    if not isinstance(latest_entry, dict):
+        return DispatchDecision(
+            False,
+            "invalid_preflight_evidence: latest envelope is not a dict",
+        )
+    latest_decision = latest_entry.get("decision")
+    if latest_decision != "KEEP":
+        return DispatchDecision(
+            False,
+            f"stale_preflight_evidence: latest preflight decision for "
+            f"attempt_epoch={current_attempt_epoch} is '{latest_decision}'",
+        )
+    return DispatchDecision(True, "preflight evidence accepted")
+
+
+def validate_privacy_label(label: str | None) -> None:
+    """Reject any data_classification outside the closed B2 whitelist.
+
+    The closed set is ``public_data | internal | confidential |
+    restricted``. Any other label (including the legacy ``"public"``
+    alias and the ad-hoc ``"private"`` heuristic) is a typed refusal
+    rather than a silent default.
+    """
+    from app.adaptive_specialist import PrivacyClassification
+
+    if label is None or not isinstance(label, str) or not label.strip():
+        raise PolicyViolation(
+            "invalid_privacy_classification",
+            "data_classification is required and must be a non-empty string",
+        )
+    try:
+        PrivacyClassification.from_label(label)
+    except ValueError as exc:
+        raise PolicyViolation("invalid_privacy_classification", str(exc)) from exc
