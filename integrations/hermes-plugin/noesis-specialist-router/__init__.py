@@ -22,11 +22,45 @@ def _json(payload: dict[str, Any]) -> str:
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
+# Typed admission codes returned to the operator. The set is closed: a new
+# code requires a corresponding reviewable change.
+BLOCK_CODES: frozenset[str] = frozenset(
+    {
+        "no_configured_ledger",
+        "plugin_admission_blocked",
+        "ledger_not_configured",
+    }
+)
+
+
+def _no_configured_ledger_block() -> dict[str, Any]:
+    """The pre-flight refusal for a missing durable ledger.
+
+    The proposal explicitly forbids creating a temporary ledger in this
+    code path: a plugin instance that has not been told which canonical
+    ledger to write to must return a typed blocker instead. Tests assert
+    on the code label so the refusal is observable from the operator's
+    perspective.
+    """
+    return {
+        "success": False,
+        "code": "no_configured_ledger",
+        "reason": (
+            "operator has not configured a canonical NOESIS_TASK_LEDGER (or "
+            "passed ledger_path); refusing to create a temporary ledger"
+        ),
+        "selected_agent": "",
+        "rejections": {},
+    }
+
+
 DELEGATE_DESCRIPTION = (
     "Route a bounded Noesis task through the explicit specialist dispatch path. "
     "This selects an eligible specialist, launches with an explicit Hermes profile, "
     "and verifies requested-vs-loaded profile identity. It does not use parent-"
-    "inheriting delegate_task fallback."
+    "inheriting delegate_task fallback. A canonical durable ledger must be "
+    "configured (NOESIS_TASK_LEDGER or ledger_path) before admission is granted; "
+    "a plugin call without one returns a typed blocker, never a temporary ledger."
 )
 
 DELEGATE_SCHEMA = {
@@ -44,6 +78,8 @@ DELEGATE_SCHEMA = {
             "risk_tier": {"type": "string"},
             "dry_run": {"type": "boolean"},
             "allow_generic_fallback": {"type": "boolean"},
+            "approved_provider": {"type": "string"},
+            "approved_model": {"type": "string"},
         },
         "required": ["title", "intent", "idempotency_key"],
     },
@@ -81,14 +117,22 @@ def register(ctx):
             payload = _delegate_payload(args)
             ledger = payload.get("ledger_path") or __import__("os").environ.get("NOESIS_TASK_LEDGER")
             events = payload.get("events_path") or __import__("os").environ.get("NOESIS_TASK_EVENTS")
-            if not ledger:
-                import tempfile
-                ledger = str(Path(tempfile.mkdtemp(prefix="noesis-plugin-ledger-")) / "tasks.jsonl")
+
+            # Plan-first admission: refuse to construct a temporary ledger.
+            # The proposal requires the plugin to bind to a configured
+            # canonical ledger before it can route or launch anything.
+            if not ledger or not str(ledger).strip():
+                return _json(_no_configured_ledger_block())
             ledger_path = Path(str(ledger))
-            events_path = Path(str(events)) if events else ledger_path.with_name("noesis-specialist-plugin-events.jsonl")
+            if not str(ledger_path).strip():
+                return _json(_no_configured_ledger_block())
+            events_path = Path(str(events)) if events else ledger_path.with_name(
+                "noesis-specialist-plugin-events.jsonl"
+            )
+
             orch = _make_orchestrator(payload, ledger_path, events_path)
             try:
-                result = orch.route_and_launch(
+                result = orch.preflight_then_route(
                     title=payload["title"],
                     intent=payload["intent"],
                     acceptance_criteria=payload["acceptance_criteria"],
@@ -109,7 +153,16 @@ def register(ctx):
                 return _json(_blocked_payload(exc))
             return _json(_success_payload(result))
         except Exception as exc:  # pragma: no cover - runtime boundary
-            return _json({"success": False, "code": "router_unavailable", "reason": str(exc)})
+            return _json(
+                {
+                    "success": False,
+                    "code": "plugin_admission_blocked",
+                    "reason": (
+                        f"plugin refused before dispatching: {exc}; "
+                        "no temporary ledger was created"
+                    ),
+                }
+            )
 
     ctx.register_tool(
         name="noesis_specialist_delegate",

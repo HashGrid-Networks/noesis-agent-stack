@@ -56,6 +56,44 @@ class ReplayError(RuntimeError):
         self.replay_error = message
 
 
+def _coerce_preflight_evidence(
+    raw: Any,
+) -> dict[int, list[dict[str, Any]]] | None:
+    """Rehydrate ``preflight_evidence`` to the keyed-per-epoch shape.
+
+    JSON serialises ``int`` keys as ``str``; coerce them back. A legacy
+    flat-dict record (the pre-B1 schema) is wrapped under the sentinel
+    epoch ``0`` so the existing record stays discoverable without losing
+    replay fidelity. ``None`` and missing keys remain ``None``.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        return None
+    out: dict[int, list[dict[str, Any]]] = {}
+    for key, value in raw.items():
+        # Legacy single-envelope record: a plain dict under the key
+        # ``"legacy"`` or any non-int / non-numeric key. Wrap under ``0``.
+        if isinstance(value, dict) and "decision" in value:
+            out.setdefault(0, []).append(value)
+            continue
+        # Modern per-epoch shape: int key (or numeric string from JSON),
+        # value is a list of evidence dicts.
+        try:
+            epoch = int(key)
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(value, list):
+            return None
+        normalised: list[dict[str, Any]] = []
+        for entry in value:
+            if not isinstance(entry, dict):
+                return None
+            normalised.append(entry)
+        out[epoch] = normalised
+    return out
+
+
 def _parse_dt(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -291,6 +329,15 @@ class TaskStore:
         task.created_by = data["created_by"]
         task.updated_at = _parse_dt(data.get("updated_at"))
         task.terminal_reason = data.get("terminal_reason")
+        # Phase B / remediation B1: ``preflight_evidence`` is keyed per
+        # ``attempt_epoch``. JSON serialises int keys as strings, so we
+        # coerce back to int on rehydrate. A legacy single-dict record
+        # (no attempt_epoch split) is treated as a flat envelope and
+        # recorded under the sentinel epoch ``0`` to keep it discoverable
+        # without losing replay fidelity. ``None`` (or a missing key)
+        # remains the canonical "no preflight has ever run" signal.
+        raw_evidence = data.get("preflight_evidence")
+        task.preflight_evidence = _coerce_preflight_evidence(raw_evidence)
         raw_version = data.get("task_version", 0)
         if raw_version is None:
             raw_version = 0

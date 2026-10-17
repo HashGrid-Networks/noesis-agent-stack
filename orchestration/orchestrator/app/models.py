@@ -273,6 +273,26 @@ class TaskContract:
     delegation: Delegation = field(default_factory=Delegation)
     # Compare-and-swap fence for TaskStore.put. Absent on legacy records (0).
     task_version: int = 0
+    # Phase B (contract ``adaptive-specialist-preflight-b1``): immutable
+    # preflight decision/evidence bound to the canonical task record. ``None``
+    # means no preflight decision has been recorded yet — never default to
+    # a fabricated "KEEP".
+    #
+    # Contract addendum (remediation B1, finding Skeptic §3.B / important):
+    # the shape is keyed per ``attempt_epoch`` so that:
+    #
+    #   * each ``preflight_configuration`` call APPENDS one entry under the
+    #     current ``task.delegation.attempt_epoch`` key (or ``0`` when no
+    #     attempt has been granted yet), rather than overwriting the
+    #     evidence;
+    #   * ``submit_candidate`` revalidates evidence against the current
+    #     ``attempt_epoch`` and rejects stale evidence with a typed block;
+    #   * operators can replay the full decision history for a task across
+    #     attempts without ever conflating per-attempt evidence.
+    #
+    # ``None`` ⇒ no preflight has ever run for this task. ``{}`` is not a
+    # valid value (a never-preflighted task carries ``None``).
+    preflight_evidence: dict[int, list[dict[str, Any]]] | None = None
 
     def __post_init__(self) -> None:
         if self.risk_tier not in RISK_TIERS:
@@ -402,6 +422,7 @@ class TaskContract:
         data["depends_on"] = [str(d) for d in self.depends_on]
         data["created_at"] = _iso(self.created_at)
         data["updated_at"] = _iso(self.updated_at)
+        data["preflight_evidence"] = self.preflight_evidence
         approval = data["approval"] or {}
         if approval:
             approval["approved_at"] = _iso(self.approval.approved_at if self.approval else None)

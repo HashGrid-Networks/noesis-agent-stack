@@ -895,6 +895,226 @@ class Orchestrator:
         except ReplayError as exc:
             raise PolicyViolation("replay_error", str(exc)) from exc
 
+    # ------------------------------------------------- adaptive-specialist --
+
+    def preflight_configuration(
+        self,
+        *,
+        task_id: str | UUID,
+        classification: Any,
+        current_profile_id: str,
+        data_classification: str = "public",
+        privacy_constraint: Any = None,
+        readiness_overrides: dict[str, Any] | None = None,
+    ) -> Any:
+        """Compute and bind a typed preflight configuration decision.
+
+        This is the Phase B offline equivalent of a per-task admission gate.
+        It is bound to the existing canonical task/attempt lifecycle: the
+        returned proposal is appended to the task's ``preflight_evidence``
+        field and persisted via ``store.put(task, event="preflight_proposed")``
+        so the same decision is reproduced across replays.
+
+        The decision is computed against a :class:`CapabilitySnapshot` derived
+        from the canonical roster, and an in-memory
+        :class:`LocalReadinessRegistry`. It does not call any provider, does
+        not refresh credentials, and does not mutate installed profiles.
+
+        Parameters mirror the slices defined in
+        ``test_adaptive_specialist_preflight.py``::
+
+            task_id               the canonical task identifier
+            classification        a ``Classification`` (specialist_routing)
+                                  — only ``task_class`` is consulted
+            current_profile_id    the runtime profile to evaluate against
+            data_classification   "public" | "internal" | "internal_redacted"
+                                  | "confidential" (offline policy hook)
+            privacy_constraint    optional ``PrivacyConstraint`` to enforce
+            readiness_overrides   optional dict of provider -> readiness
+                                  evidence (each a RouteReadinessEvidence)
+
+        Returns the immutable :class:`TaskConfigurationProposal`.
+        """
+        from app import adaptive_specialist
+        from app.adaptive_specialist import (
+            CapabilitySnapshot,
+            LocalReadinessRegistry,
+            PrivacyConstraint,
+            ProviderFamilyMap,
+            TaskConfigurationPrecomputer,
+        )
+        from app.models import Approval
+
+        task = self._require(task_id)
+        snapshot = CapabilitySnapshot.build(
+            repo_root=Path(__file__).resolve().parents[3]
+        )
+        readiness = LocalReadinessRegistry.synthetic(
+            provider="default-synthetic",
+            auth_eligible=False,
+        )
+        families = ProviderFamilyMap.from_snapshot(snapshot)
+        engine = TaskConfigurationPrecomputer(
+            snapshot=snapshot,
+            readiness=readiness,
+            families=families,
+        )
+        # ``data_classification`` is advisory here; the proposal converts to
+        # typed :class:`PrivacyConstraint` only when explicitly requested.
+        constraint = privacy_constraint
+        if isinstance(privacy_constraint, str):
+            try:
+                constraint = PrivacyConstraint.from_label(privacy_constraint)
+            except ValueError:
+                constraint = None
+        proposal = engine.evaluate(
+            task_class=getattr(classification, "task_class", "general"),
+            risk_tier=task.risk_tier,
+            data_classification=data_classification,
+            privacy_constraint=constraint,
+            current_profile_id=current_profile_id,
+            readiness_overrides=readiness_overrides or {},
+        )
+        # Build the persisted evidence record. The orchestrator is the only
+        # authority on its own tasks: it stamps the decision onto the task
+        # ledger via the canonical ``store.put`` call.
+        #
+        # Remediation B1 (Skeptic §3.B / important): ``preflight_evidence``
+        # is keyed per ``attempt_epoch`` and accumulated append-only via
+        # ``store.put`` events. The current ``task.delegation.attempt_epoch``
+        # (or sentinel ``0`` before the first attempt is granted) selects
+        # which bucket this entry is appended to. Replays of the same task
+        # therefore see the full per-epoch decision history rather than
+        # one overwritten envelope. ``submit_candidate`` then revalidates
+        # evidence against the current ``attempt_epoch`` to refuse stale
+        # preflight reuse across attempts.
+        evidence = {
+            "attempt_epoch": int(
+                task.delegation.attempt_epoch
+                if task.delegation.attempt_epoch is not None
+                else 0
+            ),
+            "recorded_at": utcnow().isoformat(),
+            "decision": proposal.decision.value,
+            "profile_id": proposal.profile_id,
+            "selected_provider_family": proposal.selected_provider_family,
+            "reasons": list(proposal.reasons),
+            "unknowns": list(proposal.unknowns),
+            "bundle_digest": proposal.bundle_digest,
+            "evidence_digest": proposal.evidence_digest,
+            "capability_snapshot_digest": proposal.capability_snapshot_digest,
+            "readiness_digests": dict(proposal.readiness_digests),
+            "task_class": getattr(classification, "task_class", "general"),
+            "data_classification": data_classification,
+        }
+        epoch = int(
+            task.delegation.attempt_epoch
+            if task.delegation.attempt_epoch is not None
+            else 0
+        )
+        history = task.preflight_evidence or {}
+        bucket = list(history.get(epoch, ()))
+        bucket.append(evidence)
+        history[epoch] = bucket
+        task.preflight_evidence = history
+        persisted = self.store.put(task, event="preflight_proposed")
+        # The orchestrator returns the persisted task (with ``preflight_evidence``
+        # field set) plus the in-memory proposal object so a caller that wants
+        # to read the typed proposal directly does not need to re-parse the
+        # ledger. The two views are guaranteed to carry the same
+        # ``bundle_digest``/``evidence_digest`` since both derive from the
+        # same :class:`TaskConfigurationProposal`.
+        class _BoundProposal:
+            def __init__(self, task, proposal):
+                self.task = task
+                self.proposal = proposal
+
+            @property
+            def decision(self):
+                return self.proposal.decision
+
+            @property
+            def bundle_digest(self):
+                return self.proposal.bundle_digest
+
+            @property
+            def evidence_digest(self):
+                return self.proposal.evidence_digest
+
+            @property
+            def profile_id(self):
+                return self.proposal.profile_id
+
+            @property
+            def selected_provider_family(self):
+                return self.proposal.selected_provider_family
+
+            @property
+            def reasons(self):
+                return self.proposal.reasons
+
+            @property
+            def unknowns(self):
+                return self.proposal.unknowns
+
+            @property
+            def capability_snapshot_digest(self):
+                return self.proposal.capability_snapshot_digest
+
+            @property
+            def readiness_digests(self):
+                return self.proposal.readiness_digests
+
+        return _BoundProposal(persisted, proposal)
+
+    def preflight_then_route(
+        self,
+        *,
+        title: str,
+        intent: str,
+        acceptance_criteria: list[str],
+        verification: Verification,
+        idempotency_key: str,
+        required_capability: str | None = None,
+        risk_tier: str = "r0",
+        dry_run: bool = True,
+        allow_generic_fallback: bool = False,
+        approved_provider: str | None = None,
+        approved_model: str | None = None,
+        workspace: str | None = None,
+    ) -> Any:
+        """Plugin-facing convenience: plan-first, then route.
+
+        The contract requires the plugin to enter through plan-first
+        admission; this method does that by calling
+        :meth:`route_and_launch`, which internally calls :meth:`propose`
+        before specialist selection. Preflight is **not** invoked here
+        because the selected profile is unknown until
+        :meth:`route_and_launch` completes selection; an oracle-style
+        "guess-the-future-selected-profile" preflight would conflate
+        the decision layers.
+
+        Operators that want a preflight decision recorded in the ledger
+        **before** the specialist is selected must call
+        :meth:`preflight_configuration` (or
+        :meth:`Orchestrator.select_specialist`) explicitly before
+        handing the task to the plugin dispatch entry point.
+        """
+        return self.route_and_launch(
+            title=title,
+            intent=intent,
+            acceptance_criteria=acceptance_criteria,
+            verification=verification,
+            idempotency_key=idempotency_key,
+            required_capability=required_capability,
+            risk_tier=risk_tier,
+            dry_run=dry_run,
+            allow_generic_fallback=allow_generic_fallback,
+            approved_provider=approved_provider,
+            approved_model=approved_model,
+            workspace=workspace,
+        )
+
     # -------------------------------------------------------------- approval --
 
     def approve(
@@ -1128,6 +1348,56 @@ class Orchestrator:
                 "stale_attempt_report",
                 f"attempt_epoch {attempt_epoch} != current {current_epoch}",
             )
+        # Remediation B1 (Skeptic §3.B / important): revalidate per-attempt
+        # preflight evidence. ``preflight_evidence`` is keyed per
+        # ``attempt_epoch`` and accumulated append-only.
+        #
+        # The §3.B "stale evidence reused without re-preflight" scenario
+        # fires when evidence was recorded for a *different* epoch and
+        # would be reused at the current one. The submit gate therefore
+        # rejects when:
+        #
+        #   * the current epoch has a bucket whose latest decision is
+        #     not ``KEEP`` (a stale non-KEEP must not be silently
+        #     upgraded);
+        #   * evidence exists for other epochs but the current epoch is
+        #     empty (the cross-epoch reuse the Skeptic flagged).
+        #
+        # When no preflight has ever been recorded (``preflight_evidence``
+        # is ``None`` or empty), the submit path falls through to its
+        # existing pre-remediation behaviour for backward compatibility
+        # with operators that bypass preflight on legacy task shapes.
+        # The cross-epoch reuse gate above catches the §3.B scenario
+        # whether the legacy shape predates this remediation or not.
+        history = task.preflight_evidence
+        if history:
+            current_bucket = history.get(int(attempt_epoch))
+            if current_bucket:
+                latest_entry = current_bucket[-1]
+                latest_decision = (
+                    latest_entry.get("decision")
+                    if isinstance(latest_entry, dict)
+                    else None
+                )
+                if latest_decision != "KEEP":
+                    raise PolicyViolation(
+                        "stale_preflight_evidence",
+                        (
+                            f"latest preflight decision for attempt_epoch="
+                            f"{attempt_epoch} is '{latest_decision}'; "
+                            "submit_candidate requires a KEEP decision"
+                        ),
+                    )
+            else:
+                # Evidence recorded under other epochs but not the current
+                # one — the §3.B stale-reuse scenario.
+                raise PolicyViolation(
+                    "stale_preflight_evidence",
+                    (
+                        f"preflight evidence for attempt_epoch={attempt_epoch} is "
+                        f"missing; recorded epochs={sorted(history.keys())}"
+                    ),
+                )
         if released is not None and (revision_changed or digest_changed):
             raise PolicyViolation(
                 "stale_attempt_report",

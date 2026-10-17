@@ -26,6 +26,9 @@ def test_noesis_specialist_router_loads_through_hermes_plugin_manager(tmp_path, 
     )
 
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+    monkeypatch.delenv("NOESIS_TASK_LEDGER", raising=False)
+    monkeypatch.delenv("NOESIS_TASK_EVENTS", raising=False)
+    monkeypatch.delenv("NOESIS_AGENT_STACK_ROOT", raising=False)
     monkeypatch.setenv("NOESIS_AGENT_STACK_ROOT", str(ROOT))
     monkeypatch.syspath_prepend(str(HERMES_SOURCE))
     monkeypatch.syspath_prepend(str(ROOT / "orchestration" / "orchestrator"))
@@ -54,6 +57,61 @@ def test_noesis_specialist_router_loads_through_hermes_plugin_manager(tmp_path, 
             "title": "plugin-manager architecture route",
             "intent": "Design the Noesis profile contract for an architecture specialist",
             "idempotency_key": "plugin-manager:architecture-route",
+            "acceptance_criteria": ["specialist selected"],
+            "verification": {"method": "launcher_attestation"},
+            "dry_run": True,
+        }
+    )
+    # Without a configured canonical ledger the plugin must refuse with a
+    # typed blocker (Phase B slice G). It must NOT fall back to a temp
+    # ledger directory. This is exactly the assertion we want here.
+    assert '"success": false' in raw
+    assert '"no_configured_ledger"' in raw
+
+
+def test_noesis_specialist_router_plugin_host_with_ledger_succeeds(tmp_path, monkeypatch) -> None:
+    """When a configured ledger is supplied, the plugin path runs through
+    plan-first admission and the canonical orchestrator pipeline."""
+    if not (HERMES_SOURCE / "hermes_cli" / "plugins.py").exists():
+        raise AssertionError("Hermes source checkout with plugin host is required for this integration test")
+
+    hermes_home = tmp_path / "hermes-home"
+    plugin_dir = hermes_home / "plugins" / "noesis-specialist-router"
+    shutil.copytree(PLUGIN_SOURCE, plugin_dir, ignore=shutil.ignore_patterns("__pycache__"))
+    (hermes_home / "config.yaml").write_text(
+        yaml.safe_dump({"plugins": {"enabled": ["noesis-specialist-router"]}}),
+        encoding="utf-8",
+    )
+
+    ledger_path = tmp_path / "ledger.jsonl"
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+    monkeypatch.setenv("NOESIS_TASK_LEDGER", str(ledger_path))
+    monkeypatch.setenv("NOESIS_AGENT_STACK_ROOT", str(ROOT))
+    monkeypatch.syspath_prepend(str(HERMES_SOURCE))
+    monkeypatch.syspath_prepend(str(ROOT / "orchestration" / "orchestrator"))
+    candidate_sites = [HERMES_SOURCE / "venv" / "lib" / "python3.11" / "site-packages"]
+    candidate_sites.extend(
+        sorted((Path.home() / ".hermes" / "installs").glob("**/venv/lib/python*/site-packages"))
+    )
+    for site_packages in candidate_sites:
+        if site_packages.exists() and str(site_packages) not in sys.path:
+            sys.path.append(str(site_packages))
+
+    from hermes_cli.plugins import PluginManager
+    from tools.registry import registry
+
+    registry.deregister("noesis_specialist_delegate", scope=str(hermes_home))
+    manager = PluginManager()
+    manager.discover_and_load()
+
+    entry = registry.get_entry("noesis_specialist_delegate", scope=str(hermes_home))
+    assert entry is not None
+
+    raw = entry.handler(
+        {
+            "title": "plugin-manager with ledger",
+            "intent": "Design the Noesis profile contract for an architecture specialist",
+            "idempotency_key": "plugin-manager:ledger-route",
             "acceptance_criteria": ["specialist selected"],
             "verification": {"method": "launcher_attestation"},
             "dry_run": True,
