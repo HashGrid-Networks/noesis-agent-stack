@@ -149,3 +149,74 @@ def test_restart_recovers_without_duplicate_dispatch(tmp_path: Path) -> None:
     # Replaying the same ASSIGN does not duplicate.
     assert second_store.process(_assign_msg(task_id=task_id)) is not None
     assert len(list(second_store._all_records())) == 1
+
+
+# ------------------------------------------------------- review findings -----
+def _to_verifying(store, task_id: str) -> None:
+    store.process(_assign_msg(task_id=task_id))
+    store.mark_ready(task_id, by="noesis-orchestrator")
+    store.start_running(task_id, by="noesis-forge", expected_attempt_epoch=1)
+    store.submit_verifying(
+        task_id, by="noesis-forge", expected_attempt_epoch=1, candidate_revision="rev-1"
+    )
+
+
+def test_critical_findings_block_spec_pass(tmp_path: Path) -> None:
+    """Subgoal 5 §2: critical/important findings block approval (delegation.py:680)."""
+    store = _store(tmp_path)
+    task_id = _task_id()
+    _to_verifying(store, task_id)
+    with pytest.raises(ActivationError):
+        store.record_review(
+            task_id,
+            stage="spec",
+            verdict="PASS",
+            reviewer="noesis-sentinel",
+            candidate_revision="rev-1",
+            findings=[{"severity": "critical", "detail": "unsafe change"}],
+        )
+    task = store.get(task_id)
+    assert task is not None
+    assert task.state == TaskState.verifying
+    assert task.reviews == []
+
+
+def test_important_findings_block_quality_approval(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    task_id = _task_id()
+    _to_verifying(store, task_id)
+    store.record_review(
+        task_id, stage="spec", verdict="PASS", reviewer="noesis-sentinel",
+        candidate_revision="rev-1", findings=[],
+    )
+    with pytest.raises(ActivationError):
+        store.record_review(
+            task_id,
+            stage="quality",
+            verdict="APPROVED",
+            reviewer="noesis-skeptic",
+            candidate_revision="rev-1",
+            findings=[{"severity": "important", "detail": "missing regression test"}],
+        )
+    task = store.get(task_id)
+    assert task is not None
+    assert task.state == TaskState.spec_review
+    assert len(task.reviews) == 1  # only the spec PASS row survives the refusal
+
+
+def test_minor_findings_do_not_block_passing_verdict(tmp_path: Path) -> None:
+    """The gate is severity-specific: minor findings are recorded, not refused."""
+    store = _store(tmp_path)
+    task_id = _task_id()
+    _to_verifying(store, task_id)
+    task = store.record_review(
+        task_id,
+        stage="spec",
+        verdict="PASS",
+        reviewer="noesis-sentinel",
+        candidate_revision="rev-1",
+        findings=[{"severity": "minor", "detail": "style nit"}],
+    )
+    assert task.state == TaskState.spec_review
+    assert len(task.reviews) == 1
+    assert task.reviews[0].findings[0]["severity"] == "minor"
