@@ -34,6 +34,17 @@ from app.lease_lifecycle import (
 )
 
 
+REPO_ROOT = Path(__file__).resolve().parents[3]
+HISTORICAL_LEDGER = REPO_ROOT / "workspace/subgoal5-sandbox/control-plane-ledger.jsonl"
+
+# The historical ledger is a gitignored sandbox artifact (workspace/ is
+# gitignored); absent checkouts skip rather than fail.
+requires_historical_ledger = pytest.mark.skipif(
+    not HISTORICAL_LEDGER.is_file(),
+    reason=f"historical sandbox fixture absent (gitignored): {HISTORICAL_LEDGER}",
+)
+
+
 def _assign(store: DelegationStore, task_id: str) -> None:
     store.process(
         HandoffEnvelope(
@@ -466,9 +477,9 @@ def test_lease_renew_refused_during_review_and_after_release(store: DelegationSt
         store.lease_renew("t-no-renew", duration=3600, expected_attempt_epoch=1, by="noesis-forge")
 
 
+@requires_historical_ledger
 def test_historical_cand_subgoal5_v1_remains_unaccepted() -> None:
-    path = Path("/Users/elvis/projects/noesis-agent-stack/workspace/subgoal5-sandbox/control-plane-ledger.jsonl")
-    assert path.is_file()
+    path = HISTORICAL_LEDGER
     accepted = 0
     saw_candidate = False
     for raw in path.read_text(encoding="utf-8").splitlines():

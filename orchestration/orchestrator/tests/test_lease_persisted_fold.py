@@ -31,6 +31,13 @@ HISTORICAL_LEDGER = REPO_ROOT / "workspace/subgoal5-sandbox/control-plane-ledger
 ORCH_PATH = str(REPO_ROOT / "orchestration/orchestrator")
 PYTHON = sys.executable
 
+# The historical ledger is a gitignored sandbox artifact (workspace/ is
+# gitignored); absent checkouts skip rather than fail.
+requires_historical_ledger = pytest.mark.skipif(
+    not HISTORICAL_LEDGER.is_file(),
+    reason=f"historical sandbox fixture absent (gitignored): {HISTORICAL_LEDGER}",
+)
+
 CHILD_PUT = r"""
 import sys
 import time
@@ -203,6 +210,7 @@ def test_failed_cas_cannot_taint_later_successful_write(tmp_path: Path) -> None:
     assert final.delegation.candidate_revision != "evil"
 
 
+@requires_historical_ledger
 def test_historical_ledger_copy_refuses_worker_actions_without_grant(tmp_path: Path) -> None:
     dest = tmp_path / "historical.jsonl"
     shutil.copyfile(HISTORICAL_LEDGER, dest)
