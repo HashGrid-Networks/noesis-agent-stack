@@ -153,6 +153,22 @@ def agent_yaml(entry: dict, source: dict, fields: dict[str, str]) -> str:
     reporting = cur.get("reporting", {})
     risk = entry["risk"]
     approvals = "\n".join(f"    - {a}" for a in risk["human_approval_required"])
+    # Fail closed: the advisory contract must be declared in the curation —
+    # the sole roster source — never fabricated here.
+    declared_capabilities = cur.get("declared_capabilities")
+    if not declared_capabilities:
+        raise SystemExit(
+            "curation.yaml is missing 'declared_capabilities'; refusing to "
+            "generate agency specs without an explicit advisory capability set"
+        )
+    advisory_toolsets = cur.get("advisory_toolsets")
+    if not advisory_toolsets:
+        raise SystemExit(
+            "curation.yaml is missing 'advisory_toolsets'; refusing to "
+            "generate agency specs without an explicit advisory toolset list"
+        )
+    if "terminal" in advisory_toolsets or "code_execution" in advisory_toolsets:
+        raise SystemExit("advisory_toolsets must never include terminal/code_execution")
     doc = {
         "version": CONVERTER_VERSION,
         "agent": {
@@ -172,10 +188,7 @@ def agent_yaml(entry: dict, source: dict, fields: dict[str, str]) -> str:
                     "default": lane.get("default", "kimi-k2.7-code"),
                     "provider": lane.get("provider", "kimi-coding"),
                 },
-                "toolsets": [
-                    "memory", "file", "web", "session_search",
-                    "skills", "clarify",
-                ],
+                "toolsets": list(advisory_toolsets),
             },
             "risk": {
                 "privileged_tools": bool(risk["privileged_tools"]),
@@ -183,7 +196,7 @@ def agent_yaml(entry: dict, source: dict, fields: dict[str, str]) -> str:
                 "autonomous_execution": bool(risk["autonomous_execution"]),
                 "human_approval_required": risk["human_approval_required"],
             },
-            "capabilities": ["advisory", "review", "analysis"],
+            "capabilities": list(declared_capabilities),
             "guardrails": [
                 "Advisory-only: never executes privileged actions",
                 "No secrets or credentials access, ever",

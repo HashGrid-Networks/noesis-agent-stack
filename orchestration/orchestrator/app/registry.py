@@ -2,7 +2,10 @@
 
 Canonical identities come from profiles/noesis-roster.yaml (profile existence,
 tier, toolsets) joined with agents/<profile>/agent.yaml (declared capabilities
-and guardrails). A small set of execution lanes from platform/agent-registry.yaml
+and guardrails). Advisory agency identities come from agency/curation.yaml —
+the sole roster source for the third-party fleet — via app/agency_registry.py
+(source "agency-curation", tier "advisory", staged, no terminal authority).
+A small set of execution lanes from platform/agent-registry.yaml
 is additionally admissible, but only when explicitly listed in that file's
 `orchestration_lanes` allowlist AND marked `enabled: true`. Registration never
 implicitly activates a lane, and unknown names are rejected at dispatch time.
@@ -22,6 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from app import _yaml_compat as yaml
+from app import agency_registry
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 ROSTER_PATH = REPO_ROOT / "profiles" / "noesis-roster.yaml"
@@ -134,6 +138,14 @@ def load_registry() -> tuple[dict[str, ProfileRecord], dict[str, str]]:
             activation_state="activated" if spec.get("enabled") else "registered",
             source="agent-registry",
         )
+
+    for name, record in agency_registry.load_agency_registry().items():
+        if name in registry:
+            raise ValueError(
+                f"identity conflict: '{name}' is defined in both the roster and "
+                f"agency/curation.yaml"
+            )
+        registry[name] = record
 
     aliases: dict[str, str] = {}
     for alias, target in (reg_raw.get("aliases") or {}).items():

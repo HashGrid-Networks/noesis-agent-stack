@@ -17,6 +17,15 @@ updated: 2026-09-16
 pin: ad9264e309bd5e5422c04784372d7841b1e5d604
 
 profile_prefix: agency
+
+# Declared advisory contract shared by every Tier A profile. This is the SOLE
+# declaration point: agency/convert.py emits these into generated agent.yaml,
+# and the orchestrator registry adapter (app/agency_registry.py) registers the
+# same set. Advisory profiles are r0-only (policy advisory_cannot_execute_
+# consequential) and never hold terminal/code_execution toolsets.
+declared_capabilities: [advisory, review, analysis]
+advisory_toolsets: [memory, file, web, session_search, skills, clarify]
+
 model_lane:
   default: kimi-k2.7-code        # proven live lane (nous key dead 2026-09-16)
   provider: kimi-coding

@@ -5,8 +5,10 @@ supervisor, and synthesizer, so its only real power is deciding what must not
 proceed. Rules are deterministic and independent of model output.
 
 Enforced:
-  1. Assignee must exist in profiles/noesis-roster.yaml.
-  2. Assignee must declare the required capability in agents/<name>/agent.yaml.
+  1. Assignee must exist in profiles/noesis-roster.yaml, an allowlisted and
+     activated orchestration lane, or agency/curation.yaml (advisory-only).
+  2. Assignee must declare the required capability in agents/<name>/agent.yaml
+     (or, for agency profiles, in the curation's declared_capabilities).
   3. Reviewer-only and supervisor profiles may never be assigned executing work.
   4. Irreversible operations force r3 and require a narrowly privileged
      executor that actually has terminal authority.
@@ -15,6 +17,9 @@ Enforced:
   6. Unresolved dependencies block dispatch.
   7. Structured handoff evidence is mandatory before 'succeeded'.
   8. A task whose lease expired cannot succeed silently.
+  9. Advisory agency profiles (source agency-curation) are r0-only: they can
+     never be assigned r2/r3 or irreversible work, and can never be the
+     reviewer_profile (they are not reviewer-only).
 """
 
 from __future__ import annotations
@@ -75,6 +80,15 @@ def validate_assignment(task: TaskContract) -> None:
             "supervisor_cannot_execute",
             f"'{profile.name}' is a supervisor profile and must delegate, not execute",
         )
+
+    if profile.source == "agency-curation":
+        if task.irreversible_operations or task.risk_tier in {"r2", "r3"}:
+            raise PolicyViolation(
+                "advisory_cannot_execute_consequential",
+                f"'{profile.name}' is an advisory agency profile and cannot be "
+                f"assigned consequential work (risk_tier={task.risk_tier}, "
+                f"irreversible={sorted(task.irreversible_operations)})",
+            )
 
     if profile.capabilities and task.required_capability not in profile.capabilities:
         raise PolicyViolation(

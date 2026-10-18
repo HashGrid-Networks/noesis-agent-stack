@@ -1,0 +1,335 @@
+# PROPOSED — noesis-workflow-catalog/v1
+#
+# This is a proposed specification layer, NOT a repository-native format.
+# Every node is emitted as a native TaskContract through
+# app.workflow_catalog.admit_workflow -> Orchestrator.propose, and admitted
+# through policy.validate_admission. No parallel scheduler, ledger, approval
+# service, or registry is introduced.
+#
+# Capability strings are exact declared capabilities: agency profiles declare
+# only the curation's declared_capabilities set (advisory / review / analysis);
+# domain distinction lives in intent + curated division, never in invented
+# capability strings.
+#
+# Advisory (agency) nodes are r0-only by policy (advisory_cannot_execute_consequential).
+catalog:
+  version: "0.1.0"
+  status: designed            # designed | implemented | offline validated | installed | live exercised | production approved
+
+shared_controls:
+  max_tasks_per_workflow: 8
+  max_parallel_tasks: 3
+  advisory_default_risk: r0
+  implementation_default_risk: r1
+  review_rounds_max: 2
+  per_task_timeout_s: [600, 3600]
+  artifact_max_bytes: 1048576
+  live_inference_default: false
+
+workflows:
+
+  - workflow_id: wf-arch-security-decision
+    description: >-
+      System architecture advice, threat modeling, ADR, and an independently
+      reviewed implementation handoff. Implementation itself is a separate,
+      separately authorized r1 task.
+    nodes:
+      plan:
+        assignee_profile: noesis-cartographer
+        required_capability: plan_artifact
+        intent: >-
+          Decompose the decision question into options, an ADR skeleton, and a
+          risk register. Advisory planning only; no execution.
+        acceptance_criteria:
+          - Options with tradeoffs and a recommendation
+          - ADR skeleton and risk register drafted
+        timeout_s: 1200
+      sysdes:
+        assignee_profile: agency-engineering-software-architect
+        required_capability: analysis
+        advisory: true
+        depends_on: [plan]
+        intent: >-
+          Produce a system design analysis for the target described in the plan
+          artifact. Advisory only: no privileged actions, no external calls.
+        acceptance_criteria:
+          - Module boundaries and interfaces enumerated
+          - Assumptions labelled fact/inference/unknown
+        timeout_s: 1800
+      threat:
+        assignee_profile: agency-security-architect
+        required_capability: analysis
+        advisory: true
+        depends_on: [plan]
+        intent: >-
+          Produce a threat model for the target described in the plan artifact,
+          with labelled assumptions and mitigations. Advisory only.
+        acceptance_criteria:
+          - Trust boundaries and threats enumerated
+          - Every assumption labelled fact/inference/unknown
+        timeout_s: 1800
+      adr:
+        assignee_profile: noesis-cartographer
+        required_capability: plan_artifact
+        depends_on: [sysdes, threat]
+        reviewer_profile: noesis-skeptic
+        intent: >-
+          Consolidate the system design and threat model into the ADR decision
+          record with the risk register updated.
+        acceptance_criteria:
+          - ADR references both advisory artifacts
+          - Open questions listed in unmet criteria if any
+        timeout_s: 1200
+      handoff:
+        assignee_profile: noesis-quill
+        required_capability: technical_writing
+        depends_on: [adr]
+        intent: >-
+          Draft the operator-facing implementation handoff packet from the
+          approved ADR. Drafting only; no implementation.
+        acceptance_criteria:
+          - Handoff packet cites the ADR and both advisory artifacts
+        timeout_s: 900
+
+  - workflow_id: wf-repo-archaeology
+    description: >-
+      Evidence-linked repository drift analysis, test-gap identification, and
+      bounded remediation with independent review.
+    nodes:
+      drift:
+        assignee_profile: agency-specialized-codebase-archaeologist
+        required_capability: analysis
+        advisory: true
+        intent: >-
+          Map the repository's module graph and multi-session drift evidence.
+          Read-only advisory analysis; no writes outside the artifact directory.
+        acceptance_criteria:
+          - Drift map artifact written with cited paths
+          - Findings labelled fact/inference/unknown
+        timeout_s: 1800
+      gaps:
+        assignee_profile: noesis-forge
+        required_capability: test_plan
+        depends_on: [drift]
+        reviewer_profile: noesis-skeptic
+        intent: >-
+          From the drift map, identify test gaps and propose a bounded
+          remediation test plan. No code changes in this node.
+        acceptance_criteria:
+          - Test plan lists gaps with cited files
+          - Remediation scope is a closed in-scope file set
+        timeout_s: 1200
+      remediate:
+        assignee_profile: noesis-forge
+        required_capability: code_modify
+        risk_tier: r1
+        depends_on: [gaps]
+        reviewer_profile: noesis-sentinel
+        workspace: wf-repo-archaeology/remediate
+        intent: >-
+          Implement the approved test plan in an isolated workspace. Strict
+          in-scope file set; not_self_approved; no commits.
+        acceptance_criteria:
+          - Tests pass in the isolated workspace
+          - tracked_diff_sha256 recorded for review binding
+        timeout_s: 3600
+
+  - workflow_id: wf-infra-reliability
+    description: >-
+      Sanitized operational evidence, reliability advisory, capacity/cost
+      scenarios, and runbook improvements.
+    nodes:
+      evidence:
+        assignee_profile: noesis-substrate
+        required_capability: observability
+        intent: >-
+          Collect read-only, sanitized operational signals for the target
+          scope. No production mutation.
+        acceptance_criteria:
+          - Evidence packet written with sanitization notes
+          - Unknowns listed explicitly
+        timeout_s: 1800
+      advisory:
+        assignee_profile: agency-support-infrastructure-maintainer
+        required_capability: analysis
+        advisory: true
+        depends_on: [evidence]
+        intent: >-
+          Reliability/performance advisory over the sanitized evidence packet.
+          Advisory only; no operational changes.
+        acceptance_criteria:
+          - Failure modes enumerated with cited evidence
+          - Recommendations labelled by confidence
+        timeout_s: 1800
+      scenarios:
+        assignee_profile: noesis-grid
+        required_capability: structured_analysis
+        depends_on: [evidence]
+        intent: >-
+          Build capacity and cost scenario tables from the sanitized evidence.
+          Never fabricate or silently interpolate; unknowns stay unknown.
+        acceptance_criteria:
+          - Scenario tables written as CSV artifacts
+          - Reproducibility notes included
+        timeout_s: 1800
+      runbook:
+        assignee_profile: noesis-quill
+        required_capability: technical_writing
+        depends_on: [advisory, scenarios]
+        reviewer_profile: noesis-skeptic
+        intent: >-
+          Draft runbook improvements from the reliability advisory and the
+          capacity scenarios.
+        acceptance_criteria:
+          - Runbook deltas cite advisory and scenario artifacts
+        timeout_s: 1200
+
+  - workflow_id: wf-evidence-synthesis
+    description: >-
+      Source-quality assessment, experimental design, evidence matrix, and a
+      reproducible analysis handoff.
+    nodes:
+      quality:
+        assignee_profile: noesis-signal
+        required_capability: source_eval
+        intent: >-
+          Evaluate source quality for the supplied claim set; label each
+          source and claim verified/inference/unknown.
+        acceptance_criteria:
+          - Every source has a quality grade and citation
+          - Every claim labelled
+        timeout_s: 1800
+      expdesign:
+        assignee_profile: agency-academic-statistician
+        required_capability: analysis
+        advisory: true
+        depends_on: [quality]
+        intent: >-
+          Advisory review of the quantitative methods and experimental design
+          for the evaluation. No data manipulation.
+        acceptance_criteria:
+          - Methods concerns enumerated with citations
+          - Design recommendations labelled by confidence
+        timeout_s: 1800
+      matrix:
+        assignee_profile: agency-research-synthesist
+        required_capability: analysis
+        advisory: true
+        depends_on: [quality]
+        intent: >-
+          Synthesize the graded sources into an evidence matrix. Advisory only.
+        acceptance_criteria:
+          - Evidence matrix cites every graded source
+          - Gaps listed explicitly
+        timeout_s: 1800
+      analysis:
+        assignee_profile: noesis-grid
+        required_capability: structured_analysis
+        depends_on: [expdesign, matrix]
+        reviewer_profile: noesis-skeptic
+        intent: >-
+          Produce the reproducible analysis handoff from the evidence matrix
+          and methods advisory.
+        acceptance_criteria:
+          - Analysis script and inputs reproducible from the packet
+          - Uncertainty stated per result
+        timeout_s: 1800
+
+  - workflow_id: wf-product-discovery
+    description: >-
+      Problem definition, requirements, prioritization, delivery plan, and a
+      dependency-bound phase plan.
+    nodes:
+      reqs:
+        assignee_profile: agency-product-manager
+        required_capability: analysis
+        advisory: true
+        intent: >-
+          Advisory product requirements analysis: problem definition,
+          requirements, and prioritization rationale.
+        acceptance_criteria:
+          - Requirements with prioritization rationale
+          - Open questions listed explicitly
+        timeout_s: 1800
+      deps:
+        assignee_profile: noesis-cartographer
+        required_capability: plan_artifact
+        depends_on: [reqs]
+        intent: >-
+          Convert the requirements into a dependency-mapped phase plan with a
+          risk register.
+        acceptance_criteria:
+          - Acyclic task graph with dependencies
+          - Risk register updated
+        timeout_s: 1200
+      delivery:
+        assignee_profile: agency-project-manager-senior
+        required_capability: analysis
+        advisory: true
+        depends_on: [deps]
+        intent: >-
+          Advisory delivery tracking plan over the cartographer's phase plan
+          (decomposition-vs-delivery split: milestones and tracking, not
+          re-decomposition).
+        acceptance_criteria:
+          - Milestones map to phase-graph nodes
+          - Tracking cadence defined
+        timeout_s: 1200
+      plan:
+        assignee_profile: noesis-cartographer
+        required_capability: plan_artifact
+        depends_on: [delivery]
+        reviewer_profile: noesis-skeptic
+        intent: >-
+          Finalize the delivery-bound plan with acceptance criteria per phase.
+        acceptance_criteria:
+          - Every phase carries objective acceptance criteria
+        timeout_s: 1200
+
+  - workflow_id: wf-telecom-edge-feasibility
+    description: >-
+      Geographic/network assumptions, resilience, data gaps, cost sensitivity,
+      and a feasibility memo.
+    nodes:
+      gis:
+        assignee_profile: agency-gis-technical-consultant
+        required_capability: analysis
+        advisory: true
+        intent: >-
+          Advisory GIS analysis: geographic assumptions, coverage and tiling
+          considerations for the target area.
+        acceptance_criteria:
+          - Geographic assumptions enumerated and labelled
+          - Data gaps named explicitly
+        timeout_s: 1800
+      cost:
+        assignee_profile: agency-finance-financial-analyst
+        required_capability: analysis
+        advisory: true
+        intent: >-
+          Advisory cost-sensitivity modeling for the feasibility envelope.
+          Modelling only; no financial actions.
+        acceptance_criteria:
+          - Cost scenarios with stated assumptions
+          - Sensitivity ranges labelled by confidence
+        timeout_s: 1800
+      gaps:
+        assignee_profile: noesis-signal
+        required_capability: deep_research
+        intent: >-
+          Identify data gaps for the feasibility study with cited sources.
+        acceptance_criteria:
+          - Every gap has a cited source or is labelled unknown
+        timeout_s: 1800
+      memo:
+        assignee_profile: noesis-quill
+        required_capability: technical_writing
+        depends_on: [gis, cost, gaps]
+        reviewer_profile: noesis-skeptic
+        intent: >-
+          Compose the feasibility memo integrating GIS, cost, and data-gap
+          findings with explicit uncertainty.
+        acceptance_criteria:
+          - Memo cites all three upstream artifacts
+          - Uncertainty stated per major claim
+        timeout_s: 1200
