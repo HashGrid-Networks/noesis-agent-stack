@@ -1,0 +1,70 @@
+{
+  "schema": "noesis.codebase-state/v1",
+  "started_at": "2026-10-18T19:55:54.706197+00:00",
+  "host_timezone": "America/Denver",
+  "requested_timezone": "America/Denver",
+  "dry_run": false,
+  "model_calls": 0,
+  "external_model_calls": 0,
+  "semantic_retrieval": "blocked",
+  "semantic_retrieval_reason": "no verified local codebase ingestion backend was bound; qmd and wiki ingest-status are markdown tools, not this contract",
+  "deployment_status": "unverified",
+  "schedule_installed": false,
+  "discovery": [
+    {
+      "path": "/var/folders/2r/8qxjlbp91hn8xcz8mg00yg640000gn/T/sample-ingest-3efoo4tg/projects/noesis-sample",
+      "name": "noesis-sample",
+      "kind": "primary_checkout",
+      "ingestable": true,
+      "git_dir": "/var/folders/2r/8qxjlbp91hn8xcz8mg00yg640000gn/T/sample-ingest-3efoo4tg/projects/noesis-sample/.git",
+      "branch": "main",
+      "head_sha": "8ecafbeb823f5f72eb22f44d6baed0cf2bc50cfc",
+      "detached": false,
+      "worktree_of": "",
+      "remote_sanitized": "",
+      "remote_identity": "local/noesis-sample"
+    }
+  ],
+  "status": "success",
+  "repos": [
+    {
+      "path": "/var/folders/2r/8qxjlbp91hn8xcz8mg00yg640000gn/T/sample-ingest-3efoo4tg/projects/noesis-sample",
+      "name": "noesis-sample",
+      "kind": "primary_checkout",
+      "remote_identity": "local/noesis-sample",
+      "remote_sanitized": "",
+      "branch": "main",
+      "head_sha": "8ecafbeb823f5f72eb22f44d6baed0cf2bc50cfc",
+      "detached": false,
+      "worktree_of": "",
+      "collected_at": "2026-10-18T19:55:54.707477+00:00",
+      "deployment_status": "unverified",
+      "status": "success",
+      "incomplete_reason": "",
+      "git_exec": "used",
+      "excluded": [],
+      "todos": [
+        {
+          "path": "TODO.md",
+          "line": 1,
+          "text": "TODO: this fixture is not a live repository"
+        }
+      ],
+      "model_calls": 0,
+      "bytes_hashed": 205,
+      "changed_during_collection": false,
+      "head_sha_after": "8ecafbeb823f5f72eb22f44d6baed0cf2bc50cfc",
+      "file_count": 3,
+      "statuses": {
+        "committed_clean": 2,
+        "untracked": 1
+      }
+    }
+  ],
+  "finished_at": "2026-10-18T19:55:54.831411+00:00",
+  "checkpoint_advanced": true,
+  "ingestion": "updated",
+  "snapshot_id": "20261018T195554Z",
+  "published_as_current": true,
+  "tombstones": []
+}

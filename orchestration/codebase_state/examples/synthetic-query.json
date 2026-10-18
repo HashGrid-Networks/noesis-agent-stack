@@ -1,0 +1,13 @@
+[
+  {
+    "kind": "file",
+    "repo_path": "/var/folders/2r/8qxjlbp91hn8xcz8mg00yg640000gn/T/sample-ingest-3efoo4tg/projects/noesis-sample",
+    "relative_path": "README.md",
+    "sha256": "208872df4ec87e25b47309f0fee82a6d4e1cd21def737b9b42b4bf7dfa5454ad",
+    "head_sha": "8ecafbeb823f5f72eb22f44d6baed0cf2bc50cfc",
+    "worktree_status": "committed_clean",
+    "collected_at": "2026-10-18T19:55:54.707477+00:00",
+    "snapshot_id": "20261018T195554Z",
+    "provenance": "current_manifest"
+  }
+]
