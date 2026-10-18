@@ -358,19 +358,16 @@ profiles:
     model_alias_or_id: kimi-k2.7-code
     evidence: 'active profile metadata: ~/.hermes/profiles/noesis-architect/config.yaml'
   repo_declared:
-    provider_lane: OPENROUTER_FALLBACK
-    model_alias_or_id: anthropic/claude-sonnet-5
-    evidence: profiles/live/noesis-architect/config.yaml
-  alignment: drift
+    provider_lane: KIMI_CODE
+    model_alias_or_id: kimi-k2.7-code
+    evidence: profiles/live/noesis-architect/config.yaml (reconciled 2026-10-18)
+  alignment: aligned
   resolution:
-    state: blocked
-    rationale: Repository-declared profile uses OpenRouter as a primary route while global catalog/policy keeps OpenRouter
-      disabled/fallback-only.
+    state: needs_evidence
+    rationale: "Repository declaration aligned to the KIMI_CODE route; the lane is approved in platform/inference-routing.yaml (status: approved, max_risk_tier: r2). The observed active runtime matches the declared route. The model id kimi-k2.7-code is not yet in shared/model-aliases.yaml's capability_aliases, so the validator requires needs_evidence rather than allowed; catalog promotion is a follow-up."
     required_gates:
-    - independent_provider_review
-    - qa_or_policy_gate
-    - resolve_openrouter_catalog_contradiction
-    - human_review_before_any_runtime_change
+    - catalog_entry_required
+    - alias_or_pinned_model_registration
   target_routing_class: supervisor_control_plane
 - profile_id: noesis-skeptic
   profile_type: qa
