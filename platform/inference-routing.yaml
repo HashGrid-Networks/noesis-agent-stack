@@ -55,6 +55,7 @@ approved_lanes:
   KIMI_CODE:
     status: approved
     provider_family: kimi
+    hermes_provider: kimi-coding
     permitted_profile_types:
     - supervisor
     - orchestrator

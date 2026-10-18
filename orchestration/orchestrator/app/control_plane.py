@@ -88,6 +88,24 @@ from app.transport_contract import TransportRequest
 DEFAULT_FAILURE_THRESHOLD = 3
 
 
+_STDOUT_EVIDENCE_LIMIT = 16_384
+
+
+def _bounded_stdout_evidence(stdout: str | None) -> str | None:
+    """Cap persisted child stdout for the durable ledger; None when empty.
+
+    The launcher already redacts before this point; this only bounds what the
+    launch record carries so the ACCEPT phase can audit the child's handoff
+    verbatim instead of only its digest.
+    """
+    if not stdout:
+        return None
+    if len(stdout) <= _STDOUT_EVIDENCE_LIMIT:
+        return stdout
+    truncated = len(stdout) - _STDOUT_EVIDENCE_LIMIT
+    return stdout[:_STDOUT_EVIDENCE_LIMIT] + f"\n…[truncated {truncated} chars]"
+
+
 @dataclass
 class CircuitBreaker:
     """Halts dispatch after repeated failures, or on operator command."""
@@ -425,6 +443,14 @@ class Orchestrator:
                 "authoritative contract_revision/baseline is missing; refusing spawn",
             )
         capped_timeout = min(float(timeout_s), remaining)
+        # Policy lane names are not Hermes CLI provider ids. Map the approved
+        # lane through the inference-routing policy before building the launch
+        # command; unknown lanes keep the raw value (non-lane ids pass through).
+        launch_provider = approved_provider
+        if approved_provider and self.inference_enforcer is not None:
+            mapped_provider = self.inference_enforcer.hermes_provider_for_lane(approved_provider)
+            if mapped_provider:
+                launch_provider = mapped_provider
         try:
             launch = self._invoke_launch(
                 task=task,
@@ -433,7 +459,7 @@ class Orchestrator:
                 task_id=str(task.task_id),
                 cwd=workspace_path,
                 dry_run=False,
-                provider=approved_provider,
+                provider=launch_provider,
                 model=approved_model,
                 timeout_s=capped_timeout,
                 remaining_lease_s=remaining,
@@ -460,10 +486,10 @@ class Orchestrator:
                 "loaded_profile_mismatch",
                 f"requested '{selected.runtime_profile}' but loaded '{launch.loaded_profile}'",
             )
-        reported_provider = getattr(launch, "provider", approved_provider)
+        reported_provider = getattr(launch, "provider", launch_provider)
         reported_model = getattr(launch, "model", approved_model)
-        if approved_provider and reported_provider not in (None, approved_provider):
-            raise RoutingBlocked("provider_mismatch", f"requested {approved_provider} but launched {reported_provider}")
+        if launch_provider and reported_provider not in (None, launch_provider):
+            raise RoutingBlocked("provider_mismatch", f"requested {launch_provider} but launched {reported_provider}")
         if approved_model and reported_model not in (None, approved_model):
             raise RoutingBlocked("model_mismatch", f"requested {approved_model} but launched {reported_model}")
         handle = {
@@ -487,6 +513,7 @@ class Orchestrator:
                 "accepted": False,
                 "sorted": sorted(launch.artifacts or ()),
                 "stdout_digest": getattr(launch, "stdout_digest", None),
+                "captured_stdout": _bounded_stdout_evidence(getattr(launch, "captured_stdout", None)),
                 "collection_error": getattr(launch, "collection_error", None),
                 "attempt_id": getattr(launch, "attempt_id", None),
             }
@@ -1365,6 +1392,14 @@ class Orchestrator:
                 "authoritative contract_revision/baseline is missing; refusing spawn",
             )
         capped_timeout = min(float(timeout_s), remaining)
+        # Policy lane names are not Hermes CLI provider ids. Map the approved
+        # lane through the inference-routing policy before building the launch
+        # command; unknown lanes keep the raw value (non-lane ids pass through).
+        launch_provider = approved_provider
+        if approved_provider and self.inference_enforcer is not None:
+            mapped_provider = self.inference_enforcer.hermes_provider_for_lane(approved_provider)
+            if mapped_provider:
+                launch_provider = mapped_provider
         try:
             launch = self._invoke_launch(
                 task=task,
@@ -1373,7 +1408,7 @@ class Orchestrator:
                 task_id=str(task.task_id),
                 cwd=workspace_path,
                 dry_run=False,
-                provider=approved_provider,
+                provider=launch_provider,
                 model=approved_model,
                 timeout_s=capped_timeout,
                 remaining_lease_s=remaining,
@@ -1400,10 +1435,10 @@ class Orchestrator:
                 "loaded_profile_mismatch",
                 f"requested '{selected.runtime_profile}' but loaded '{launch.loaded_profile}'",
             )
-        reported_provider = getattr(launch, "provider", approved_provider)
+        reported_provider = getattr(launch, "provider", launch_provider)
         reported_model = getattr(launch, "model", approved_model)
-        if approved_provider and reported_provider not in (None, approved_provider):
-            raise RoutingBlocked("provider_mismatch", f"requested {approved_provider} but launched {reported_provider}")
+        if launch_provider and reported_provider not in (None, launch_provider):
+            raise RoutingBlocked("provider_mismatch", f"requested {launch_provider} but launched {reported_provider}")
         if approved_model and reported_model not in (None, approved_model):
             raise RoutingBlocked("model_mismatch", f"requested {approved_model} but launched {reported_model}")
         handle = {
@@ -1427,6 +1462,7 @@ class Orchestrator:
                 "accepted": False,
                 "sorted": sorted(launch.artifacts or ()),
                 "stdout_digest": getattr(launch, "stdout_digest", None),
+                "captured_stdout": _bounded_stdout_evidence(getattr(launch, "captured_stdout", None)),
                 "collection_error": getattr(launch, "collection_error", None),
                 "attempt_id": getattr(launch, "attempt_id", None),
             }

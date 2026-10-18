@@ -288,6 +288,23 @@ class InferenceRoutingEnforcer:
         lane = lanes.get(name)
         return lane if isinstance(lane, dict) else None
 
+    def hermes_provider_for_lane(self, lane_name: str) -> str | None:
+        """Map an approved policy lane name to the Hermes CLI provider id.
+
+        Policy lane names (e.g. ``KIMI_CODE``) are not Hermes provider ids;
+        the launcher needs the id the CLI actually resolves (e.g.
+        ``kimi-coding``). Returns None when the lane is unknown or carries no
+        explicit ``hermes_provider`` binding — callers fall back to the raw
+        value so non-lane provider ids pass through unchanged.
+        """
+        if not lane_name or self._policy is None:
+            return None
+        lane = self._lane(lane_name) or {}
+        provider = lane.get("hermes_provider")
+        if provider is None:
+            return None
+        return str(provider).strip() or None
+
     def _profile_reconciliation(self, profile_id: str) -> dict[str, Any] | None:
         if self._policy is None:
             return None
