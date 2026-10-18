@@ -561,6 +561,56 @@ class HermesCliAdapter:
             return None
         return min(requested, remaining)
 
+    def _bind_spawn_identity(
+        self, isolated_root: Path, profile_id: str
+    ) -> tuple[LaunchAttestation | None, str | None]:
+        """Copy source identity into the home that will actually be launched.
+
+        ``config.yaml`` stays the isolated fallback-denial file. ``SOUL.md`` and
+        ``honcho.json`` are the specialist identity and must match the source
+        bytes. A name-only placeholder is not that identity when the source
+        contract is richer.
+        """
+        source = self.profiles_root / profile_id
+        dest = isolated_root / "profiles" / profile_id
+        dest.mkdir(parents=True, exist_ok=True)
+        for name in ("SOUL.md", "honcho.json"):
+            src = source / name
+            if not src.is_file():
+                continue
+            target = dest / name
+            target.write_bytes(src.read_bytes())
+            if target.read_bytes() != src.read_bytes():
+                return None, f"isolated {name} does not match source profile bytes"
+        source_soul = source / "SOUL.md"
+        soul = dest / "SOUL.md"
+        if not source_soul.is_file():
+            return None, "source profile has no SOUL.md to bind into the spawn home"
+        if not soul.is_file() or soul.read_bytes() != source_soul.read_bytes():
+            return None, "isolated spawn SOUL.md does not match source profile bytes"
+        placeholder = f"name: {profile_id}\n".encode("utf-8")
+        if soul.read_bytes() == placeholder and source_soul.read_bytes() != placeholder:
+            return None, "name-only SOUL.md is not specialist identity"
+        digest = hashlib.sha256()
+        for name in ("SOUL.md", "honcho.json"):
+            path = dest / name
+            if not path.is_file():
+                continue
+            digest.update(name.encode("utf-8"))
+            digest.update(b"\0")
+            digest.update(path.read_bytes())
+            digest.update(b"\0")
+        return (
+            LaunchAttestation(
+                requested_profile=profile_id,
+                loaded_profile=profile_id,
+                runtime="hermes",
+                profile_path=str(dest),
+                manifest_sha256=digest.hexdigest(),
+            ),
+            None,
+        )
+
     def _attest(self, profile_id: str) -> tuple[LaunchAttestation | None, str | None, list[str]]:
         cmd = [self.hermes_bin, "-p", profile_id, "profile", "show", profile_id]
         try:
@@ -771,6 +821,19 @@ class HermesCliAdapter:
             return LaunchResult(False, profile_id, None, attest_cmd, None, f"child profile mismatch: {child_attestation.loaded_profile}", blocker_code="profile_mismatch")
         if isolated_fallback_chain(child_chain_text) != []:
             return LaunchResult(False, profile_id, None, attest_cmd, None, "child fallback chain is not empty", blocker_code="fallback_unenforced")
+        # The profile-show name check above reads the installed home. The child
+        # process uses isolated_root. Bind source identity bytes into that home
+        # and attest those bytes before any inference command.
+        bound, bind_error = self._bind_spawn_identity(isolated_root, profile_id)
+        if bind_error or bound is None:
+            return self._blocked(
+                profile_id,
+                attest_cmd,
+                attestation,
+                "loaded_profile_mismatch",
+                bind_error or "spawn identity unbound",
+            )
+        attestation = bound
         # Flags verified offline in hermes_cli/_parser.py: -p, --provider, -m, -z.
         cmd = [self.hermes_bin, "-p", profile_id, "--provider", provider, "-m", model, "-z", prompt]
         env = self._env()

@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from app.control_plane import Orchestrator
+from app.inference_routing import EnforcerConfig
 from app.launcher import LaunchAttestation, LaunchResult, RuntimeAdapter
 from app.models import Verification
 from app.specialist_routing import CapabilityIndex, RoutingBlocked, selection_rejections
@@ -98,6 +99,7 @@ def _make_orchestrator(payload: dict[str, Any], ledger: Path, events: Path | Non
         runtime_adapter=adapter,
         capability_index=capability_index,
         routing_event_log_path=events,
+        inference_enforcer_config=EnforcerConfig.from_env(),
     )
 
 
@@ -144,7 +146,7 @@ def main(argv: list[str] | None = None) -> int:
     payload = _load_payload(args.input)
     orch = _make_orchestrator(payload, args.ledger, args.events)
     try:
-        result = orch.route_and_launch(
+        result = orch.preflight_then_route(
             title=str(payload["title"]),
             intent=str(payload["intent"]),
             acceptance_criteria=[str(item) for item in payload.get("acceptance_criteria", [])],
@@ -164,6 +166,7 @@ def main(argv: list[str] | None = None) -> int:
             approved_provider=payload.get("approved_provider"),
             approved_model=payload.get("approved_model"),
             workspace=payload.get("workspace"),
+            expected_epoch=payload.get("expected_epoch"),
         )
     except RoutingBlocked as exc:
         print(json.dumps(_blocked_payload(exc), ensure_ascii=False, indent=2))
